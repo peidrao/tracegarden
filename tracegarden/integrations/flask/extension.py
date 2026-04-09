@@ -39,6 +39,35 @@ def init_tracegarden_flask(app, config, storage, redactor) -> None:
 
     _attach_hooks(app, config, storage, redactor)
     mount_flask_blueprint(app, config=config, storage=storage)
+    _try_install_sqlalchemy(app)
+
+
+def _try_install_sqlalchemy(app) -> None:
+    """Auto-instrument SQLAlchemy if Flask-SQLAlchemy is present on the app."""
+    try:
+        from tracegarden.integrations.sqlalchemy import install_sqlalchemy_instrumentation
+
+        # Flask-SQLAlchemy ≥ 3.x stores the extension under app.extensions["sqlalchemy"]
+        ext = app.extensions.get("sqlalchemy") if hasattr(app, "extensions") else None
+        if ext is None:
+            return
+
+        # Flask-SQLAlchemy 3.x: ext is the SQLAlchemy instance itself
+        engine = None
+        if hasattr(ext, "engine"):
+            engine = ext.engine
+        elif hasattr(ext, "db") and hasattr(ext.db, "engine"):
+            engine = ext.db.engine
+
+        if engine is not None:
+            install_sqlalchemy_instrumentation(engine)
+        else:
+            logger.debug(
+                "TraceGarden: Flask-SQLAlchemy extension found but could not resolve engine. "
+                "Call install_sqlalchemy_instrumentation(engine) manually."
+            )
+    except Exception:
+        logger.debug("TraceGarden: SQLAlchemy auto-instrumentation failed", exc_info=True)
 
 
 def _attach_hooks(app, config, storage, redactor) -> None:
