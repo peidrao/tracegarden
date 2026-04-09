@@ -96,7 +96,7 @@
 ```
 
 **OTel path (optional):**
-`setup_otel()` installs a `TraceGardenSpanExporter` as an additional processor alongside whatever OTLP exporter the team already uses. The exporter converts OTel `ReadableSpan` objects into `tracegarden.Span` records and writes them to storage, linking them to the in-flight `TraceRequest` via trace ID.
+`setup_otel()` installs a `TraceGardenSpanExporter` to route OTel `ReadableSpan` objects into `tracegarden.Span` records in local storage, linking them to the in-flight `TraceRequest` via trace ID.
 
 ---
 
