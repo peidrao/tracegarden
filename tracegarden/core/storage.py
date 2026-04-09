@@ -16,13 +16,21 @@ from typing import Iterator, List, Optional
 from .models import CeleryTask, TraceRequest
 
 
-_DEFAULT_DB_PATH = "/tmp/tracegarden.db"
+def _default_db_path() -> str:
+    p = Path.home() / ".tracegarden" / "tracegarden.db"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return str(p)
+
+
+_DEFAULT_DB_PATH = _default_db_path()
 
 
 class TraceStorage:
     """Thread-safe SQLite storage for TraceRequest and CeleryTask records."""
 
-    def __init__(self, db_path: str = _DEFAULT_DB_PATH, max_requests: int = 5000):
+    def __init__(self, db_path: str = "", max_requests: int = 5000):
+        if not db_path:
+            db_path = _default_db_path()
         self.db_path = str(db_path)
         self.max_requests = max_requests
         self._lock = threading.Lock()
@@ -111,7 +119,7 @@ class TraceStorage:
     # ------------------------------------------------------------------
 
     def save_request(self, req: TraceRequest) -> None:
-        """Persist a TraceRequest. Prunes oldest records if over max_requests."""
+        """Persist a TraceRequest. Prunes oldest records atomically if over max_requests."""
         data_json = json.dumps(req.to_dict())
         with self._cursor() as cur:
             cur.execute("""
@@ -129,11 +137,6 @@ class TraceStorage:
                 req.started_at.isoformat(),
                 data_json,
             ))
-        self._prune_old_requests()
-
-    def _prune_old_requests(self) -> None:
-        """Remove oldest requests if total exceeds max_requests."""
-        with self._cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM trace_requests")
             count = cur.fetchone()[0]
             if count > self.max_requests:
@@ -319,7 +322,7 @@ _default_storage: Optional[TraceStorage] = None
 _storage_lock = threading.Lock()
 
 
-def get_default_storage(db_path: str = _DEFAULT_DB_PATH) -> TraceStorage:
+def get_default_storage(db_path: str = "") -> TraceStorage:
     """Return (or create) the process-wide default TraceStorage instance."""
     global _default_storage
     if _default_storage is None:
