@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/tracegarden.png" alt="TraceGarden" width="200"/>
+  <img src="docs/screenshots/tracegarden.png" alt="TraceGarden" width="200"/>
 </p>
 
 # TraceGarden
