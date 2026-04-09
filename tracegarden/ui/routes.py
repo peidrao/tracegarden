@@ -102,6 +102,14 @@ def _query_groups(req, threshold: int) -> list:
     return groups
 
 
+def _safe_page(value: object, default: int = 1) -> int:
+    try:
+        page = int(value)
+        return page if page > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
 def handle_index(
     storage: "TraceStorage",
     config: "TraceGardenConfig",
@@ -211,6 +219,8 @@ def mount_django_urls(config=None, storage=None, use_include: bool = False):
     """
     from django.http import HttpResponse  # type: ignore[import]
     from django.urls import path  # type: ignore[import]
+    from tracegarden.core.storage import TraceStorage
+    _storage_cache = storage
 
     def _get_config():
         # Always read from Django settings so templates get the real ui_prefix.
@@ -226,11 +236,14 @@ def mount_django_urls(config=None, storage=None, use_include: bool = False):
         return cfg
 
     def _get_storage():
-        if storage is not None:
-            return storage
-        from tracegarden.core.storage import get_default_storage
-
-        return get_default_storage()
+        nonlocal _storage_cache
+        if _storage_cache is None:
+            cfg = _get_config()
+            _storage_cache = TraceStorage(
+                db_path=cfg.db_path,
+                max_requests=cfg.max_requests,
+            )
+        return _storage_cache
 
     def _token_from_request(request):
         cfg = _get_config()
@@ -242,7 +255,7 @@ def mount_django_urls(config=None, storage=None, use_include: bool = False):
         )
 
     def view_index(request):
-        page = int(request.GET.get("page", 1))
+        page = _safe_page(request.GET.get("page", 1))
         status, ct, body = handle_index(
             _get_storage(), _get_config(), page=page, token=_token_from_request(request)
         )
@@ -289,6 +302,7 @@ def mount_django_urls(config=None, storage=None, use_include: bool = False):
 
 def mount_flask_blueprint(app, config=None, storage=None):
     from flask import Blueprint, Response, request as flask_request  # type: ignore[import]
+    from tracegarden.core.storage import TraceStorage
 
     def _get_config():
         if config is not None:
@@ -299,13 +313,16 @@ def mount_flask_blueprint(app, config=None, storage=None):
 
     cfg = _get_config()
     bp = Blueprint("tracegarden", __name__, url_prefix=cfg.ui_prefix)
+    _storage_cache = storage
 
     def _get_storage():
-        if storage is not None:
-            return storage
-        from tracegarden.core.storage import get_default_storage
-
-        return get_default_storage()
+        nonlocal _storage_cache
+        if _storage_cache is None:
+            _storage_cache = TraceStorage(
+                db_path=cfg.db_path,
+                max_requests=cfg.max_requests,
+            )
+        return _storage_cache
 
     def _token():
         return _extract_token(
@@ -317,7 +334,7 @@ def mount_flask_blueprint(app, config=None, storage=None):
 
     @bp.route("/")
     def index():
-        page = int(flask_request.args.get("page", 1))
+        page = _safe_page(flask_request.args.get("page", 1))
         status, ct, body = handle_index(_get_storage(), cfg, page=page, token=_token())
         return Response(body, status=status, content_type=ct)
 
@@ -343,6 +360,7 @@ def mount_fastapi_router(app, config=None, storage=None):
     from fastapi import APIRouter  # type: ignore[import]
     from starlette.requests import Request  # type: ignore[import]
     from starlette.responses import Response  # type: ignore[import]
+    from tracegarden.core.storage import TraceStorage
 
     def _get_config():
         if config is not None:
@@ -353,17 +371,20 @@ def mount_fastapi_router(app, config=None, storage=None):
 
     cfg = _get_config()
     router = APIRouter(prefix=cfg.ui_prefix, tags=["tracegarden"])
+    _storage_cache = storage
 
     def _get_storage():
-        if storage is not None:
-            return storage
-        from tracegarden.core.storage import get_default_storage
-
-        return get_default_storage()
+        nonlocal _storage_cache
+        if _storage_cache is None:
+            _storage_cache = TraceStorage(
+                db_path=cfg.db_path,
+                max_requests=cfg.max_requests,
+            )
+        return _storage_cache
 
     def _token(request: Request) -> Optional[str]:
         return _extract_token(
-            str(request.query_params),
+            request.url.query,
             dict(request.cookies),
             request.headers,
             cfg.ui_token_header,
