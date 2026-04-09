@@ -50,6 +50,7 @@ TRACEGARDEN = {
     "ui_token": "dev-secret",
     "ui_token_header": "X-TraceGarden-Token",
     "ui_prefix": "/__tracegarden",
+    "max_body_bytes": 65536,
 }
 
 # urls.py
@@ -66,6 +67,8 @@ from tracegarden import TraceGarden
 app = Flask(__name__)
 TraceGarden(app, ui_token="dev-secret")
 ```
+
+When body capture is enabled, payload capture is truncated at `max_body_bytes` to prevent unbounded memory/storage growth.
 
 ### FastAPI (one middleware)
 
