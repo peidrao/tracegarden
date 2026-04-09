@@ -123,6 +123,7 @@ class TraceGardenMiddleware(BaseHTTPMiddleware):
                 "user_agent": req_headers.get("user-agent", ""),
                 "remote_addr": request.client.host if request.client else "",
                 "traceparent": request.headers.get("traceparent", ""),
+                "n_plus_one_threshold": config.n_plus_one_threshold,
                 "query_string": redactor.redact_url_params(
                     "?" + qs if qs else ""
                 ).lstrip("?"),
@@ -152,18 +153,20 @@ async def capture_fastapi_db_query(
     """Record a DB query in the current ASGI request context."""
     from tracegarden.core.fingerprint import fingerprint_sql
     from tracegarden.core.models import DBQuery
+    from tracegarden.core.redaction import get_default_redactor
 
     trace_id = _ctx_get_trace_id()
     if not trace_id:
         return
 
+    redactor = get_default_redactor()
     q = DBQuery.create(
         trace_id=trace_id,
         span_id=_ctx_get_span_id(),
         sql=sql,
         fingerprint=fingerprint_sql(sql),
         duration_ms=duration_ms,
-        parameters=params,
+        parameters=redactor.redact_db_params(params),
         db_vendor=db_vendor,
         started_at=started_at or datetime.now(timezone.utc),
     )
