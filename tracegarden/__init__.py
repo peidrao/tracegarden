@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List, Optional
 
 from .core.storage import TraceStorage, get_default_storage, set_default_storage
@@ -68,7 +69,11 @@ class TraceGardenConfig:
     enabled: bool = field(default_factory=_default_enabled)
     ui_token: Optional[str] = None
     ui_token_header: str = "X-TraceGarden-Token"
-    db_path: str = "/tmp/tracegarden.db"
+    db_path: str = field(
+        default_factory=lambda: str(
+            Path.home() / ".tracegarden" / "tracegarden.db"
+        )
+    )
     max_requests: int = 5000
     redact_headers: List[str] = field(default_factory=list)
     redact_params: List[str] = field(default_factory=list)
@@ -176,7 +181,7 @@ class TraceGarden:
 
 
 def setup(
-    db_path: str = "/tmp/tracegarden.db",
+    db_path: Optional[str] = None,
     ui_token: Optional[str] = None,
     ui_token_header: str = "X-TraceGarden-Token",
     redact_headers: Optional[List[str]] = None,
@@ -190,13 +195,15 @@ def setup(
     Returns the configured instance which can be used to call ``init_app``
     later, or ignored if using Django (which is configured via settings).
     """
-    config = TraceGardenConfig(
-        db_path=db_path,
-        ui_token=ui_token,
-        ui_token_header=ui_token_header,
-        redact_headers=redact_headers or [],
-        redact_params=redact_params or [],
-        header_allowlist=header_allowlist or [],
-        n_plus_one_threshold=n_plus_one_threshold,
-    )
+    kwargs = {
+        "ui_token": ui_token,
+        "ui_token_header": ui_token_header,
+        "redact_headers": redact_headers or [],
+        "redact_params": redact_params or [],
+        "header_allowlist": header_allowlist or [],
+        "n_plus_one_threshold": n_plus_one_threshold,
+    }
+    if db_path is not None:
+        kwargs["db_path"] = db_path
+    config = TraceGardenConfig(**kwargs)
     return TraceGarden(config=config)
