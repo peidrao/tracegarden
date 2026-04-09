@@ -371,7 +371,8 @@ class TraceRequest:
 
     @property
     def has_n_plus_one(self) -> bool:
-        return any(q.is_duplicate and q.duplicate_count >= 5 for q in self.db_queries)
+        threshold = int(self.metadata.get("n_plus_one_threshold", 5) or 5)
+        return any(q.is_duplicate and q.duplicate_count >= threshold for q in self.db_queries)
 
     def to_dict(self) -> dict:
         return {

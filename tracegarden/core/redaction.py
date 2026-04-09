@@ -6,7 +6,7 @@ Header, parameter, and request body redaction.
 from __future__ import annotations
 
 import json
-import re
+import logging
 from typing import Optional, Set
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -37,6 +37,7 @@ SENSITIVE_PARAMS: Set[str] = {
 }
 
 _DEFAULT_REDACTED = "[REDACTED]"
+logger = logging.getLogger(__name__)
 
 
 class Redactor:
@@ -100,20 +101,7 @@ class Redactor:
         """Return a copy of *params* with sensitive values replaced."""
         if not params:
             return {}
-        result = {}
-        for k, v in params.items():
-            if self._is_param_sensitive(k):
-                result[k] = self.redact_value
-            elif isinstance(v, dict):
-                result[k] = self.redact_params(v)
-            elif isinstance(v, list):
-                result[k] = [
-                    self.redact_value if self._is_param_sensitive(k) else item
-                    for item in v
-                ]
-            else:
-                result[k] = v
-        return result
+        return self._redact_dict_recursive(params)
 
     def redact_body(self, body: str, content_type: str = "") -> str:
         """
@@ -173,6 +161,7 @@ class Redactor:
         try:
             params = parse_qs(body, keep_blank_values=True)
         except Exception:
+            logger.debug("Unable to parse form body for redaction", exc_info=True)
             return body
         redacted: dict = {}
         for key, values in params.items():
@@ -181,6 +170,29 @@ class Redactor:
             else:
                 redacted[key] = values
         return urlencode(redacted, doseq=True)
+
+    def redact_db_params(self, params: object) -> list:
+        """
+        Redact SQL bind parameters while preserving shape for storage.
+
+        - dict params are redacted by key and returned as values list.
+        - list/tuple params are recursively redacted item-by-item.
+        - scalar params are returned in a one-item list.
+        """
+        if params is None:
+            return []
+        if isinstance(params, dict):
+            return list(self.redact_params(params).values())
+        if isinstance(params, (list, tuple)):
+            return [self._redact_value_recursive(item) for item in params]
+        return [self._redact_value_recursive(params)]
+
+    def _redact_value_recursive(self, value: object) -> object:
+        if isinstance(value, dict):
+            return self._redact_dict_recursive(value)
+        if isinstance(value, list):
+            return [self._redact_value_recursive(item) for item in value]
+        return value
 
 
 # Module-level default redactor (no allowlists — strict mode).
