@@ -1,5 +1,26 @@
-*.pyc
-.venv
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.venv/
+
+# Local runtime artifacts
 *.db
 *.db-shm
 *.db-wal
+*.sqlite3
+*.log
+heavy-report-*.json
+
+# IDE/editor
+.vscode/
+.idea/
+.DS_Store
+
+# Build
+build/
+dist/
