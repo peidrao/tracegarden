@@ -113,6 +113,17 @@ class TraceStorage:
                 CREATE INDEX IF NOT EXISTS idx_celery_tasks_task_id
                 ON celery_tasks(task_id)
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pending_spans (
+                    trace_id   TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    span_data  TEXT NOT NULL
+                )
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_pending_spans_trace_id
+                ON pending_spans(trace_id)
+            """)
 
     # ------------------------------------------------------------------
     # TraceRequest CRUD
@@ -120,8 +131,19 @@ class TraceStorage:
 
     def save_request(self, req: TraceRequest) -> None:
         """Persist a TraceRequest. Prunes oldest records atomically if over max_requests."""
-        data_json = json.dumps(req.to_dict())
         with self._cursor() as cur:
+            data_dict = req.to_dict()
+            cur.execute(
+                "SELECT span_data FROM pending_spans WHERE trace_id = ? ORDER BY started_at ASC",
+                (req.trace_id,),
+            )
+            pending_rows = cur.fetchall()
+            if pending_rows:
+                data_dict.setdefault("spans", []).extend(
+                    [json.loads(row["span_data"]) for row in pending_rows]
+                )
+
+            data_json = json.dumps(data_dict)
             cur.execute("""
                 INSERT OR REPLACE INTO trace_requests
                     (id, trace_id, span_id, method, path, status_code, duration_ms, started_at, data)
@@ -137,18 +159,22 @@ class TraceStorage:
                 req.started_at.isoformat(),
                 data_json,
             ))
-            cur.execute("SELECT COUNT(*) FROM trace_requests")
-            count = cur.fetchone()[0]
-            if count > self.max_requests:
-                excess = count - self.max_requests
+
+            if pending_rows:
+                cur.execute("""
+                    DELETE FROM pending_spans
+                    WHERE trace_id = ?
+                """, (req.trace_id,))
+
+            if self.max_requests >= 0:
                 cur.execute("""
                     DELETE FROM trace_requests
                     WHERE id IN (
                         SELECT id FROM trace_requests
-                        ORDER BY started_at ASC
-                        LIMIT ?
+                        ORDER BY started_at DESC
+                        LIMIT -1 OFFSET ?
                     )
-                """, (excess,))
+                """, (self.max_requests,))
 
     def get_request(self, request_id: str) -> Optional[TraceRequest]:
         """Fetch a single TraceRequest by its UUID, with Celery tasks stitched in."""
@@ -215,6 +241,7 @@ class TraceStorage:
         with self._cursor() as cur:
             cur.execute("DELETE FROM trace_requests")
             cur.execute("DELETE FROM celery_tasks")
+            cur.execute("DELETE FROM pending_spans")
 
     def add_span_to_request(self, trace_id: str, span_dict: dict) -> None:
         """Append a span to an existing TraceRequest identified by trace_id."""
@@ -225,6 +252,14 @@ class TraceStorage:
             )
             row = cur.fetchone()
             if row is None:
+                cur.execute(
+                    "INSERT INTO pending_spans (trace_id, started_at, span_data) VALUES (?, ?, ?)",
+                    (
+                        trace_id,
+                        str(span_dict.get("started_at", "")),
+                        json.dumps(span_dict),
+                    ),
+                )
                 return
             data = json.loads(row["data"])
             data.setdefault("spans", []).append(span_dict)
