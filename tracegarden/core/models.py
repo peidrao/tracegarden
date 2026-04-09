@@ -5,18 +5,18 @@ Dataclass models for all TraceGarden event types.
 """
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Union  # noqa: F401
 
+from .tracecontext import new_span_id, new_trace_id
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
 def _new_id() -> str:
-    return str(uuid.uuid4())
+    return new_trace_id()
 
 
 @dataclass
@@ -30,7 +30,7 @@ class DBQuery:
     fingerprint: str
     duration_ms: float
     started_at: datetime
-    parameters: list
+    parameters: Union[list, dict]
     db_vendor: str  # "sqlite" | "postgres" | "mysql"
     is_duplicate: bool = False
     duplicate_count: int = 1
@@ -43,7 +43,7 @@ class DBQuery:
         sql: str,
         fingerprint: str,
         duration_ms: float,
-        parameters: list,
+        parameters: Union[list, dict],
         db_vendor: str = "sqlite",
         started_at: Optional[datetime] = None,
     ) -> "DBQuery":
@@ -185,7 +185,7 @@ class Span:
         span_id: Optional[str] = None,
     ) -> "Span":
         return cls(
-            id=span_id or _new_id(),
+            id=span_id or new_span_id(),
             trace_id=trace_id,
             parent_span_id=parent_span_id,
             name=name,
@@ -346,8 +346,8 @@ class TraceRequest:
     ) -> "TraceRequest":
         return cls(
             id=_new_id(),
-            trace_id=trace_id or _new_id().replace("-", ""),
-            span_id=span_id or _new_id().replace("-", "")[:16],
+            trace_id=trace_id or new_trace_id(),
+            span_id=span_id or new_span_id(),
             method=method.upper(),
             path=path,
             status_code=0,
