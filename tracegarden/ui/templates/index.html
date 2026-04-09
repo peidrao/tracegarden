@@ -30,12 +30,12 @@
     </thead>
     <tbody>
       {% for req in requests %}
-      <tr class="request-row {% if req.has_n_plus_one %}has-warning{% endif %}" onclick="location.href='{{ config.ui_prefix }}/request/{{ req.id }}/'">
+      <tr class="request-row {% if req.has_n_plus_one %}has-warning{% endif %}" onclick="location.href='{{ static_base }}/request/{{ req.id }}/'">
         <td>
           <span class="method-badge method-{{ req.method | lower }}">{{ req.method }}</span>
         </td>
         <td class="path-cell">
-          <a href="{{ config.ui_prefix }}/request/{{ req.id }}/" class="path-link">{{ req.path }}</a>
+          <a href="{{ static_base }}/request/{{ req.id }}/" class="path-link">{{ req.path }}</a>
           {% if req.has_n_plus_one %}
           <span class="warning-badge" title="N+1 queries detected">N+1</span>
           {% endif %}

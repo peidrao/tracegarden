@@ -4,14 +4,14 @@
 {% block content %}
 <div class="detail-header">
   <div class="detail-breadcrumb">
-    <a href="{{ config.ui_prefix }}/" class="breadcrumb-link">&larr; Requests</a>
+    <a href="{{ static_base }}/" class="breadcrumb-link">&larr; Requests</a>
   </div>
   <div class="detail-title-row">
     <span class="method-badge method-{{ req.method | lower }}">{{ req.method }}</span>
     <h1 class="detail-path">{{ req.path }}</h1>
     <span class="status-badge status-{{ (req.status_code // 100) }}xx">{{ req.status_code }}</span>
     <span class="detail-duration mono">{{ "%.1f" | format(req.duration_ms) }}ms</span>
-    <a href="{{ config.ui_prefix }}/export/{{ req.id }}/" class="export-btn" download="tracegarden-{{ req.id[:8] }}.json">
+    <a href="{{ static_base }}/export/{{ req.id }}/" class="export-btn" download="tracegarden-{{ req.id[:8] }}.json">
       &#8595; Export JSON
     </a>
   </div>
