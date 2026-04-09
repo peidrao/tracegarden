@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import warnings
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -358,22 +359,24 @@ class TraceStorage:
             self._local.conn = None
 
 
-# Module-level default storage instance (lazy-initialized).
-_default_storage: Optional[TraceStorage] = None
-_storage_lock = threading.Lock()
-
-
 def get_default_storage(db_path: str = "") -> TraceStorage:
-    """Return (or create) the process-wide default TraceStorage instance."""
-    global _default_storage
-    if _default_storage is None:
-        with _storage_lock:
-            if _default_storage is None:
-                _default_storage = TraceStorage(db_path=db_path)
-    return _default_storage
+    """
+    Backward-compatible helper.
+
+    Prefer passing a TraceStorage instance explicitly.
+    """
+    warnings.warn(
+        "get_default_storage() is deprecated; pass TraceStorage explicitly.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return TraceStorage(db_path=db_path)
 
 
 def set_default_storage(storage: TraceStorage) -> None:
-    """Replace the default storage instance (useful in tests)."""
-    global _default_storage
-    _default_storage = storage
+    """Backward-compatible no-op."""
+    warnings.warn(
+        "set_default_storage() is deprecated and is now a no-op.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
