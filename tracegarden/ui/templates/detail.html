@@ -1,0 +1,355 @@
+{% extends "base.html" %}
+{% block title %}TraceGarden — {{ req.method }} {{ req.path }}{% endblock %}
+
+{% block content %}
+<div class="detail-header">
+  <div class="detail-breadcrumb">
+    <a href="{{ config.ui_prefix }}/" class="breadcrumb-link">&larr; Requests</a>
+  </div>
+  <div class="detail-title-row">
+    <span class="method-badge method-{{ req.method | lower }}">{{ req.method }}</span>
+    <h1 class="detail-path">{{ req.path }}</h1>
+    <span class="status-badge status-{{ (req.status_code // 100) }}xx">{{ req.status_code }}</span>
+    <span class="detail-duration mono">{{ "%.1f" | format(req.duration_ms) }}ms</span>
+    <a href="{{ config.ui_prefix }}/export/{{ req.id }}/" class="export-btn" download="tracegarden-{{ req.id[:8] }}.json">
+      &#8595; Export JSON
+    </a>
+  </div>
+  <div class="detail-meta">
+    <span class="meta-item"><span class="meta-label">Trace ID</span><code class="mono">{{ req.trace_id }}</code></span>
+    <span class="meta-item"><span class="meta-label">Started</span>{{ req.started_at.strftime("%Y-%m-%d %H:%M:%S UTC") }}</span>
+    <span class="meta-item"><span class="meta-label">DB queries</span>{{ req.db_query_count }}</span>
+    <span class="meta-item"><span class="meta-label">HTTP calls</span>{{ req.http_call_count }}</span>
+    <span class="meta-item"><span class="meta-label">Tasks</span>{{ req.task_count }}</span>
+  </div>
+</div>
+
+{% if n_plus_one_warnings %}
+<div class="alert alert-warning">
+  <strong>&#9888; N+1 Detected</strong>
+  {% for w in n_plus_one_warnings %}
+  <div class="nplus-warning">Query executed <strong>{{ w.count }}x</strong>: <code class="mono">{{ w.fingerprint }}</code></div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- Tabs -->
+<div class="tabs">
+  <button class="tab-btn active" onclick="showTab('timeline', this)">&#9202; Timeline</button>
+  <button class="tab-btn" onclick="showTab('db', this)">&#128451; DB Queries <span class="tab-count">{{ req.db_query_count }}</span></button>
+  <button class="tab-btn" onclick="showTab('http', this)">&#127760; HTTP Calls <span class="tab-count">{{ req.http_call_count }}</span></button>
+  <button class="tab-btn" onclick="showTab('tasks', this)">&#9883; Tasks <span class="tab-count">{{ req.task_count }}</span></button>
+  <button class="tab-btn" onclick="showTab('headers', this)">&#128196; Headers</button>
+</div>
+
+<!-- Timeline Tab -->
+<div id="tab-timeline" class="tab-content active">
+  <div class="timeline-container">
+    {% set total_ms = req.duration_ms if req.duration_ms > 0 else 1 %}
+
+    <!-- Root request bar -->
+    <div class="timeline-row">
+      <div class="timeline-label">
+        <span class="span-kind-badge kind-SERVER">SERVER</span>
+        <span class="span-name">{{ req.method }} {{ req.path }}</span>
+      </div>
+      <div class="timeline-bar-track">
+        <div class="timeline-bar bar-server" style="left: 0%; width: 100%;">
+          <span class="bar-label">{{ "%.1f"|format(req.duration_ms) }}ms</span>
+        </div>
+      </div>
+    </div>
+
+    {% for q in req.db_queries %}
+    {% set q_start_ms = (q.started_at - req.started_at).total_seconds() * 1000 if q.started_at >= req.started_at else 0 %}
+    {% set q_left = [(q_start_ms / total_ms * 100), 0] | max %}
+    {% set q_width = [(q.duration_ms / total_ms * 100), 0.5] | max %}
+    <div class="timeline-row">
+      <div class="timeline-label">
+        <span class="span-kind-badge kind-DB">DB</span>
+        <span class="span-name mono">{{ q.fingerprint[:60] }}{% if q.fingerprint | length > 60 %}…{% endif %}</span>
+        {% if q.is_duplicate %}<span class="dup-badge">×{{ q.duplicate_count }}</span>{% endif %}
+      </div>
+      <div class="timeline-bar-track">
+        <div class="timeline-bar bar-db {% if q.is_duplicate and q.duplicate_count >= 5 %}bar-warning{% endif %}"
+             style="left: {{ q_left | round(2) }}%; width: {{ q_width | round(2) }}%;"
+             title="{{ q.sql }}">
+          <span class="bar-label">{{ "%.2f"|format(q.duration_ms) }}ms</span>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+
+    {% for h in req.http_calls %}
+    {% set h_start_ms = (h.started_at - req.started_at).total_seconds() * 1000 if h.started_at >= req.started_at else 0 %}
+    {% set h_left = [(h_start_ms / total_ms * 100), 0] | max %}
+    {% set h_width = [(h.duration_ms / total_ms * 100), 0.5] | max %}
+    <div class="timeline-row">
+      <div class="timeline-label">
+        <span class="span-kind-badge kind-CLIENT">HTTP</span>
+        <span class="span-name">{{ h.method }} {{ h.url[:50] }}{% if h.url | length > 50 %}…{% endif %}</span>
+      </div>
+      <div class="timeline-bar-track">
+        <div class="timeline-bar bar-http"
+             style="left: {{ h_left | round(2) }}%; width: {{ h_width | round(2) }}%;"
+             title="{{ h.url }}">
+          <span class="bar-label">{{ "%.1f"|format(h.duration_ms) }}ms</span>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+
+    {% for s in req.spans %}
+    {% set s_start_ms = (s.started_at - req.started_at).total_seconds() * 1000 if s.started_at >= req.started_at else 0 %}
+    {% set s_left = [(s_start_ms / total_ms * 100), 0] | max %}
+    {% set s_width = [(s.duration_ms / total_ms * 100), 0.5] | max %}
+    <div class="timeline-row">
+      <div class="timeline-label">
+        <span class="span-kind-badge kind-{{ s.kind }}">{{ s.kind }}</span>
+        <span class="span-name">{{ s.name }}</span>
+      </div>
+      <div class="timeline-bar-track">
+        <div class="timeline-bar bar-span {% if s.status == 'ERROR' %}bar-error{% endif %}"
+             style="left: {{ s_left | round(2) }}%; width: {{ s_width | round(2) }}%;">
+          <span class="bar-label">{{ "%.1f"|format(s.duration_ms) }}ms</span>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+
+    {% if not req.db_queries and not req.http_calls and not req.spans %}
+    <div class="empty-tab">
+      <p>No additional spans captured. Instrument your app or enable OTel to see more detail.</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- DB Queries Tab -->
+<div id="tab-db" class="tab-content hidden">
+  {% if req.db_queries %}
+  <h3 class="section-title">Grouped by fingerprint</h3>
+  <table class="data-table grouped-table">
+    <thead>
+      <tr>
+        <th>Fingerprint</th>
+        <th class="align-right">Count</th>
+        <th class="align-right">Total</th>
+        <th class="align-right">Max</th>
+        <th>Flags</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for g in query_groups %}
+      <tr class="{% if g.is_n_plus_one %}row-warning{% endif %}">
+        <td class="mono">{{ g.fingerprint[:100] }}{% if g.fingerprint | length > 100 %}…{% endif %}</td>
+        <td class="align-right mono">{{ g.count }}</td>
+        <td class="align-right mono">{{ "%.2f"|format(g.total_ms) }}ms</td>
+        <td class="align-right mono">{{ "%.2f"|format(g.max_ms) }}ms</td>
+        <td>
+          {% if g.is_n_plus_one %}
+          <span class="flag-badge flag-nplus1">N+1</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h3 class="section-title">Raw queries</h3>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>SQL</th>
+        <th>Vendor</th>
+        <th class="align-right">Duration</th>
+        <th>Flags</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for q in req.db_queries %}
+      <tr class="{% if q.is_duplicate and q.duplicate_count >= 5 %}row-warning{% elif q.is_duplicate %}row-dup{% endif %}">
+        <td class="mono text-muted">{{ loop.index }}</td>
+        <td>
+          <details class="sql-details">
+            <summary class="mono sql-summary">{{ q.fingerprint[:80] }}{% if q.fingerprint | length > 80 %}…{% endif %}</summary>
+            <pre class="sql-full">{{ q.sql }}</pre>
+            {% if q.parameters %}
+            <div class="params-block">
+              <span class="params-label">Parameters:</span>
+              <code class="mono">{{ q.parameters | tojson }}</code>
+            </div>
+            {% endif %}
+          </details>
+        </td>
+        <td><span class="vendor-badge">{{ q.db_vendor }}</span></td>
+        <td class="align-right mono {% if q.duration_ms > 100 %}duration-slow{% elif q.duration_ms > 20 %}duration-medium{% else %}duration-fast{% endif %}">
+          {{ "%.2f"|format(q.duration_ms) }}ms
+        </td>
+        <td>
+          {% if q.is_duplicate and q.duplicate_count >= 5 %}
+          <span class="flag-badge flag-nplus1" title="N+1 pattern: this fingerprint ran {{ q.duplicate_count }} times">N+1 ×{{ q.duplicate_count }}</span>
+          {% elif q.is_duplicate %}
+          <span class="flag-badge flag-dup">dup ×{{ q.duplicate_count }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-tab"><p>No database queries recorded for this request.</p></div>
+  {% endif %}
+</div>
+
+<!-- HTTP Calls Tab -->
+<div id="tab-http" class="tab-content hidden">
+  {% if req.http_calls %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Method</th>
+        <th>URL</th>
+        <th>Status</th>
+        <th class="align-right">Duration</th>
+        <th>Started</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for h in req.http_calls %}
+      <tr>
+        <td><span class="method-badge method-{{ h.method | lower }}">{{ h.method }}</span></td>
+        <td class="mono url-cell">
+          <details class="http-details">
+            <summary>{{ h.url[:70] }}{% if h.url | length > 70 %}…{% endif %}</summary>
+            <div class="headers-grid">
+              <div>
+                <strong>Request Headers</strong>
+                <pre class="headers-pre">{{ h.request_headers | tojson(indent=2) }}</pre>
+              </div>
+              <div>
+                <strong>Response Headers</strong>
+                <pre class="headers-pre">{{ h.response_headers | tojson(indent=2) }}</pre>
+              </div>
+            </div>
+          </details>
+        </td>
+        <td><span class="status-badge status-{{ (h.status_code // 100) }}xx">{{ h.status_code }}</span></td>
+        <td class="align-right mono {% if h.duration_ms > 1000 %}duration-slow{% elif h.duration_ms > 300 %}duration-medium{% else %}duration-fast{% endif %}">
+          {{ "%.1f"|format(h.duration_ms) }}ms
+        </td>
+        <td class="mono text-muted">{{ h.started_at.strftime("%H:%M:%S.%f")[:-3] }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-tab"><p>No outgoing HTTP calls recorded for this request.</p></div>
+  {% endif %}
+</div>
+
+<!-- Tasks Tab -->
+<div id="tab-tasks" class="tab-content hidden">
+  {% if req.celery_tasks %}
+  <div class="tasks-timeline">
+    {% for task in req.celery_tasks %}
+    <div class="task-card task-state-{{ task.state | lower }}">
+      <div class="task-header">
+        <span class="task-name mono">{{ task.task_name }}</span>
+        <span class="task-state-badge state-{{ task.state | lower }}">{{ task.state }}</span>
+        {% if task.duration_ms is not none %}
+        <span class="task-duration mono">{{ "%.1f"|format(task.duration_ms) }}ms</span>
+        {% endif %}
+      </div>
+      <div class="task-meta">
+        <span class="meta-item"><span class="meta-label">Task ID</span><code class="mono">{{ task.task_id[:16] }}…</code></span>
+        <span class="meta-item"><span class="meta-label">Queue</span>{{ task.queue }}</span>
+        <span class="meta-item"><span class="meta-label">Enqueued</span>{{ task.enqueued_at.strftime("%H:%M:%S") }}</span>
+        {% if task.started_at %}
+        <span class="meta-item"><span class="meta-label">Started</span>{{ task.started_at.strftime("%H:%M:%S") }}</span>
+        {% endif %}
+        {% if task.completed_at %}
+        <span class="meta-item"><span class="meta-label">Completed</span>{{ task.completed_at.strftime("%H:%M:%S") }}</span>
+        {% endif %}
+      </div>
+      <div class="task-flow">
+        <div class="flow-step flow-enqueued">Enqueued<br><span class="mono">{{ task.enqueued_at.strftime("%H:%M:%S") }}</span></div>
+        <div class="flow-arrow">&#8594;</div>
+        <div class="flow-step {% if task.started_at %}flow-started{% else %}flow-pending{% endif %}">
+          {% if task.started_at %}Running<br><span class="mono">{{ task.started_at.strftime("%H:%M:%S") }}</span>
+          {% else %}Pending{% endif %}
+        </div>
+        <div class="flow-arrow">&#8594;</div>
+        <div class="flow-step {% if task.state == 'SUCCESS' %}flow-success{% elif task.state == 'FAILURE' %}flow-failure{% else %}flow-pending{% endif %}">
+          {% if task.completed_at %}{{ task.state }}<br><span class="mono">{{ task.completed_at.strftime("%H:%M:%S") }}</span>
+          {% else %}{{ task.state }}{% endif %}
+        </div>
+      </div>
+      {% if task.exception %}
+      <div class="task-exception">
+        <span class="exception-label">Exception:</span>
+        <code class="mono">{{ task.exception }}</code>
+      </div>
+      {% endif %}
+      {% if task.result %}
+      <details class="task-result-details">
+        <summary>Result</summary>
+        <pre class="mono">{{ task.result }}</pre>
+      </details>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-tab">
+    <p>No Celery tasks linked to this request.</p>
+    <p class="text-muted">To stitch tasks, pass <code class="mono">tracegarden_parent_trace_id</code> in task headers when enqueuing.</p>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Headers Tab -->
+<div id="tab-headers" class="tab-content hidden">
+  <div class="headers-grid">
+    <div class="headers-section">
+      <h3>Request Headers</h3>
+      <table class="data-table">
+        <thead><tr><th>Header</th><th>Value</th></tr></thead>
+        <tbody>
+          {% for k, v in req.request_headers.items() %}
+          <tr>
+            <td class="mono header-name">{{ k }}</td>
+            <td class="mono {% if v == '[REDACTED]' %}redacted{% endif %}">{{ v }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="headers-section">
+      <h3>Response Headers</h3>
+      <table class="data-table">
+        <thead><tr><th>Header</th><th>Value</th></tr></thead>
+        <tbody>
+          {% for k, v in req.response_headers.items() %}
+          <tr>
+            <td class="mono header-name">{{ k }}</td>
+            <td class="mono {% if v == '[REDACTED]' %}redacted{% endif %}">{{ v }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+function showTab(name, btn) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.remove('hidden');
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+}
+</script>
+{% endblock %}
