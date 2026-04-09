@@ -24,3 +24,6 @@ heavy-report-*.json
 # Build
 build/
 dist/
+
+scripts/
+examples/
