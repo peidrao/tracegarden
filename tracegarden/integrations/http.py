@@ -5,8 +5,8 @@ Automatic outgoing HTTP capture for requests/httpx.
 """
 from __future__ import annotations
 
-import time
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -16,6 +16,11 @@ from tracegarden.core.redaction import get_default_redactor
 
 _PATCHED = False
 logger = logging.getLogger(__name__)
+
+# References to the originals so we can restore them in uninstall.
+_original_requests_request = None
+_original_httpx_sync_request = None
+_original_httpx_async_request = None
 
 
 def install_http_instrumentation() -> None:
@@ -29,7 +34,37 @@ def install_http_instrumentation() -> None:
     _PATCHED = True
 
 
+def uninstall_http_instrumentation() -> None:
+    """Restore the original HTTP client methods (useful in tests)."""
+    global _PATCHED, _original_requests_request, _original_httpx_sync_request, _original_httpx_async_request
+
+    if not _PATCHED:
+        return
+
+    try:
+        import requests  # type: ignore[import]
+        if _original_requests_request is not None:
+            requests.Session.request = _original_requests_request
+            _original_requests_request = None
+    except ImportError:
+        pass
+
+    try:
+        import httpx  # type: ignore[import]
+        if _original_httpx_sync_request is not None:
+            httpx.Client.request = _original_httpx_sync_request
+            _original_httpx_sync_request = None
+        if _original_httpx_async_request is not None:
+            httpx.AsyncClient.request = _original_httpx_async_request
+            _original_httpx_async_request = None
+    except ImportError:
+        pass
+
+    _PATCHED = False
+
+
 def _patch_requests() -> None:
+    global _original_requests_request
     try:
         import requests  # type: ignore[import]
     except ImportError:
@@ -38,7 +73,8 @@ def _patch_requests() -> None:
     if getattr(requests.Session.request, "_tracegarden_patched", False):
         return
 
-    original = requests.Session.request
+    _original_requests_request = requests.Session.request
+    original = _original_requests_request
 
     def wrapped(self, method: str, url: str, **kwargs):
         ctx = get_current_trace_context()
@@ -57,7 +93,6 @@ def _patch_requests() -> None:
             return response
         finally:
             duration_ms = (time.perf_counter() - t0) * 1000.0
-
             call = HTTPCall.create(
                 trace_id=ctx["trace_id"],
                 method=method.upper(),
@@ -71,17 +106,19 @@ def _patch_requests() -> None:
             add_http_call(call)
 
     wrapped._tracegarden_patched = True  # type: ignore[attr-defined]
-    requests.Session.request = wrapped
+    requests.Session.request = wrapped  # type: ignore[method-assign]
 
 
 def _patch_httpx() -> None:
+    global _original_httpx_sync_request, _original_httpx_async_request
     try:
         import httpx  # type: ignore[import]
     except ImportError:
         return
 
     if not getattr(httpx.Client.request, "_tracegarden_patched", False):
-        original_sync = httpx.Client.request
+        _original_httpx_sync_request = httpx.Client.request
+        original_sync = _original_httpx_sync_request
 
         def wrapped_sync(self, method: str, url: Any, *args, **kwargs):
             ctx = get_current_trace_context()
@@ -116,7 +153,8 @@ def _patch_httpx() -> None:
         httpx.Client.request = wrapped_sync
 
     if not getattr(httpx.AsyncClient.request, "_tracegarden_patched", False):
-        original_async = httpx.AsyncClient.request
+        _original_httpx_async_request = httpx.AsyncClient.request
+        original_async = _original_httpx_async_request
 
         async def wrapped_async(self, method: str, url: Any, *args, **kwargs):
             ctx = get_current_trace_context()

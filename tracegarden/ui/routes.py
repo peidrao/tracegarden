@@ -5,8 +5,10 @@ Framework-agnostic UI route handlers plus per-framework mount helpers.
 """
 from __future__ import annotations
 
+import hmac
 import json
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
@@ -18,35 +20,43 @@ if TYPE_CHECKING:
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _STATIC_DIR = Path(__file__).parent / "static"
 
+# Jinja2 Environment is created once and reused — FileSystemLoader has an
+# internal template cache that would be discarded if we recreated Environment
+# on every render.
+_jinja_env = None
+_jinja_env_lock = threading.Lock()
+
+
+def _get_jinja_env():
+    global _jinja_env
+    if _jinja_env is None:
+        with _jinja_env_lock:
+            if _jinja_env is None:
+                from jinja2 import Environment, FileSystemLoader, select_autoescape  # type: ignore[import]
+                _jinja_env = Environment(
+                    loader=FileSystemLoader(str(_TEMPLATES_DIR)),
+                    autoescape=select_autoescape(["html"]),
+                )
+    return _jinja_env
+
 
 def _render(template_name: str, **context: object) -> str:
-    try:
-        from jinja2 import Environment, FileSystemLoader, select_autoescape  # type: ignore[import]
-
-        env = Environment(
-            loader=FileSystemLoader(str(_TEMPLATES_DIR)),
-            autoescape=select_autoescape(["html"]),
-        )
-        tmpl = env.get_template(template_name)
-        return tmpl.render(**context)
-    except ImportError:
-        return _render_fallback(template_name, context)
-
-
-def _render_fallback(template_name: str, context: dict) -> str:
-    path = _TEMPLATES_DIR / template_name
-    if not path.exists():
-        return f"<html><body><p>Template {template_name!r} not found.</p></body></html>"
-    tmpl_text = path.read_text()
-    for key, value in context.items():
-        tmpl_text = tmpl_text.replace("{{ " + key + " }}", str(value))
-    return tmpl_text
+    env = _get_jinja_env()
+    tmpl = env.get_template(template_name)
+    return tmpl.render(**context)
 
 
 def _check_auth(config: "TraceGardenConfig", request_token: Optional[str]) -> bool:
+    """Return True if the request is authorized to access the UI.
+
+    Uses hmac.compare_digest to prevent timing-based token guessing.
+    """
     if config.ui_token is None:
         return True
-    return request_token == config.ui_token
+    if request_token is None:
+        return False
+    # compare_digest requires both operands to be the same type.
+    return hmac.compare_digest(str(request_token), str(config.ui_token))
 
 
 def _extract_token(
@@ -179,7 +189,14 @@ def handle_static(filename: str) -> tuple[int, str, bytes]:
     path = _STATIC_DIR / safe_name
     if not path.exists():
         return 404, "text/plain", b"Not found"
-    content_type = "text/css" if safe_name.endswith(".css") else "application/octet-stream"
+
+    if safe_name.endswith(".css"):
+        content_type = "text/css; charset=utf-8"
+    elif safe_name.endswith(".js"):
+        content_type = "application/javascript; charset=utf-8"
+    else:
+        content_type = "application/octet-stream"
+
     return 200, content_type, path.read_bytes()
 
 
@@ -205,7 +222,6 @@ def mount_django_urls(config=None, storage=None, use_include: bool = False):
             **{k: v for k, v in tg.items() if k in TraceGardenConfig.__dataclass_fields__}
         )
         if config is not None:
-            # Allow caller overrides except ui_prefix, which must stay real.
             cfg.enabled = config.enabled
         return cfg
 
@@ -256,7 +272,6 @@ def mount_django_urls(config=None, storage=None, use_include: bool = False):
 
     cfg = _get_config()
     if use_include:
-        # Prefix is already handled by the path() in the project's urls.py.
         return [
             path("", view_index, name="tracegarden_index"),
             path("request/<str:request_id>/", view_detail, name="tracegarden_detail"),
