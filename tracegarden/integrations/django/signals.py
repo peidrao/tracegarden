@@ -31,16 +31,12 @@ def clear_pending_queries() -> None:
     reset_events()
 
 
-def _record_query(
-    sql: str,
-    params,
-    many: bool,
-    execute,
-    *args,
-    **kwargs,
-):
+def _record_query(execute, sql: str, params, many: bool, context):
     """
     Django database execute wrapper.
+
+    Django calls wrappers as ``wrapper(execute, sql, params, many, context)``
+    where ``context`` is ``{'connection': ..., 'cursor': ...}``.
     Installed per-request by ``TraceGardenMiddleware``.
     """
     from tracegarden.core.fingerprint import fingerprint_sql
@@ -49,12 +45,19 @@ def _record_query(
 
     ctx = get_current_trace_context()
     if not ctx.get("trace_id"):
-        return execute(sql, params, many, *args, **kwargs)
+        return execute(sql, params, many, context)
+
+    # Resolve vendor from the actual connection so multi-db apps are handled.
+    db_vendor = ctx.get("db_vendor", "unknown")
+    try:
+        db_vendor = context["connection"].vendor
+    except Exception:
+        pass
 
     started = datetime.now(timezone.utc)
     t0 = time.perf_counter()
     try:
-        return execute(sql, params, many, *args, **kwargs)
+        return execute(sql, params, many, context)
     finally:
         duration_ms = (time.perf_counter() - t0) * 1000.0
         redactor = get_default_redactor()
@@ -66,7 +69,7 @@ def _record_query(
             fingerprint=fingerprint_sql(sql),
             duration_ms=duration_ms,
             parameters=safe_params,
-            db_vendor=ctx.get("db_vendor", "unknown"),
+            db_vendor=db_vendor,
             started_at=started,
         )
         add_db_query(q)
