@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tracegarden"
-version = "0.1.2"
+version = "0.1.3"
 description = "Developer-first visual backend devtools for Django, Flask, and FastAPI"
 readme = "README.md"
 requires-python = ">=3.9"
