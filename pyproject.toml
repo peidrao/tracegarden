@@ -23,22 +23,39 @@ celery = ["celery>=5.0", "redis>=5.0"]
 http = ["requests>=2.31.0", "httpx>=0.24.0"]
 sqlalchemy = ["sqlalchemy>=1.4"]
 all = [
+    "django>=3.2",
+    "flask>=2.0",
+    "fastapi>=0.95.0",
+    "starlette>=0.27.0",
     "celery>=5.0",
     "redis>=5.0",
     "requests>=2.31.0",
     "httpx>=0.24.0",
     "sqlalchemy>=1.4",
 ]
-dev = ["pytest", "pytest-asyncio", "httpx", "requests"]
+dev = ["pytest", "pytest-asyncio", "httpx", "requests", "mypy", "ruff"]
 
 [project.urls]
-Homepage = "https://github.com/peidrao/tracegarden"
-Documentation = "https://tracegarden.dev/docs"
+Homepage = "https://github.com/tracegarden/tracegarden"
+Documentation = "https://github.com/tracegarden/tracegarden#readme"
 Repository = "https://github.com/tracegarden/tracegarden"
 Issues = "https://github.com/tracegarden/tracegarden/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tracegarden"]
+include = ["tracegarden/py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.mypy]
+python_version = "3.9"
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+show_error_codes = true
+strict_optional = true
