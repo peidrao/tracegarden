@@ -5,11 +5,12 @@ Celery signal handlers for task lifecycle events and request-task stitching.
 """
 from __future__ import annotations
 
-import uuid
+import json
 from datetime import datetime, timezone
 from typing import Any, Optional, Tuple
 
 from tracegarden.core.context import get_current_trace_id
+from tracegarden.core.tracecontext import new_trace_id
 
 try:
     from celery.signals import (  # type: ignore[import]
@@ -72,18 +73,22 @@ def _on_before_task_publish(
     if headers is None:
         return
 
-    storage = _get_storage()
-    from tracegarden.core.models import CeleryTask
-
     parent_trace_id = headers.get(_TRACEGARDEN_PARENT_KEY) or get_current_trace_id()
-    task_trace_id = headers.get(_TRACEGARDEN_TRACE_KEY) or uuid.uuid4().hex
+
+    # Skip tasks with no parent trace — they cannot be correlated to any request
+    # in the UI and would pollute the orphan-task bucket.
+    if not parent_trace_id:
+        return
+
+    task_trace_id = headers.get(_TRACEGARDEN_TRACE_KEY) or new_trace_id()
     headers[_TRACEGARDEN_TRACE_KEY] = task_trace_id
-    if parent_trace_id:
-        headers[_TRACEGARDEN_PARENT_KEY] = parent_trace_id
+    headers[_TRACEGARDEN_PARENT_KEY] = parent_trace_id
 
     task_id = headers.get("id") or headers.get("task_id")
     if not task_id:
         return
+
+    from tracegarden.core.models import CeleryTask
 
     args, kwargs_payload = _extract_args_kwargs(body)
     task_name = headers.get("task") or sender or "unknown"
@@ -92,14 +97,14 @@ def _on_before_task_publish(
     celery_task = CeleryTask.create(
         task_id=task_id,
         trace_id=task_trace_id,
-        parent_trace_id=parent_trace_id or "",
+        parent_trace_id=parent_trace_id,
         task_name=str(task_name),
         queue=queue_name,
         args=list(args),
         kwargs=dict(kwargs_payload),
     )
     celery_task.state = "PENDING"
-    storage.save_celery_task(celery_task)
+    _get_storage().save_celery_task(celery_task)
 
 
 def _on_task_prerun(
@@ -125,7 +130,12 @@ def _on_task_prerun(
 
     req_headers = _task_request_headers(task)
     parent_trace_id = req_headers.get(_TRACEGARDEN_PARENT_KEY, "")
-    trace_id = req_headers.get(_TRACEGARDEN_TRACE_KEY, uuid.uuid4().hex)
+
+    # Skip tasks with no parent trace — nothing to stitch to.
+    if not parent_trace_id:
+        return
+
+    trace_id = req_headers.get(_TRACEGARDEN_TRACE_KEY, new_trace_id())
 
     queue_info = getattr(getattr(task, "request", None), "delivery_info", {})
     queue_name = queue_info.get("routing_key", "default") if isinstance(queue_info, dict) else "default"
@@ -166,8 +176,6 @@ def _on_task_postrun(
     result_str: Optional[str] = None
     if retval is not None:
         try:
-            import json
-
             result_str = json.dumps(retval)
         except (TypeError, ValueError):
             result_str = str(retval)
@@ -220,8 +228,7 @@ def _on_task_retry(
         return
     task_id = request.id
     if task_id:
-        storage = _get_storage()
-        storage.update_task_state(task_id, state="RETRY")
+        _get_storage().update_task_state(task_id, state="RETRY")
 
 
 def _on_task_unknown(
@@ -240,9 +247,8 @@ def _on_task_unknown(
     if not id:
         return
 
-    storage = _get_storage()
     reason = str(exc) if exc else f"Unknown task type: {name or 'unknown'}"
-    storage.update_task_state(
+    _get_storage().update_task_state(
         id,
         state="FAILURE",
         completed_at=datetime.now(timezone.utc),
@@ -285,7 +291,7 @@ def _extract_args_kwargs(body: Any) -> Tuple[list, dict]:
 
     if isinstance(body, dict):
         args = body.get("args", [])
-        kwargs = body.get("kwargs", {})
-        return list(args) if isinstance(args, (list, tuple)) else [], dict(kwargs) if isinstance(kwargs, dict) else {}
+        kw = body.get("kwargs", {})
+        return list(args) if isinstance(args, (list, tuple)) else [], dict(kw) if isinstance(kw, dict) else {}
 
     return [], {}
