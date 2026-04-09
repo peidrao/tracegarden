@@ -72,8 +72,10 @@ class TraceGardenSpanExporter(SpanExporter):
     def _get_storage(self):
         if self._storage is not None:
             return self._storage
-        from tracegarden.core.storage import get_default_storage
-        return get_default_storage()
+        from tracegarden.core.storage import TraceStorage
+
+        self._storage = TraceStorage()
+        return self._storage
 
     def export(self, spans: Sequence) -> SpanExportResult:
         """Convert and store OTel spans."""
