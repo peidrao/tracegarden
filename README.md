@@ -71,16 +71,10 @@ TraceGarden(app, ui_token="dev-secret")
 
 ```python
 from fastapi import FastAPI
-from tracegarden import TraceGardenConfig
-from tracegarden.core.storage import TraceStorage
-from tracegarden.integrations.fastapi.middleware import TraceGardenMiddleware
-from tracegarden.ui.routes import mount_fastapi_router
+from tracegarden import TraceGarden
 
 app = FastAPI()
-config = TraceGardenConfig(ui_token="dev-secret")
-storage = TraceStorage(db_path=config.db_path)
-app.add_middleware(TraceGardenMiddleware, config=config, storage=storage)
-mount_fastapi_router(app, config=config, storage=storage)
+TraceGarden(app, ui_token="dev-secret")
 ```
 
 ## UI Access
