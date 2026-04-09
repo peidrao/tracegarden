@@ -5,8 +5,11 @@ OpenTelemetry TracerProvider setup with optional TraceGarden span export.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
-from typing import Optional, Sequence
+from typing import Sequence
+
+logger = logging.getLogger(__name__)
 
 from opentelemetry import trace  # type: ignore[import]
 from opentelemetry.sdk.resources import Resource  # type: ignore[import]
@@ -20,7 +23,6 @@ from opentelemetry.sdk.trace.export import (  # type: ignore[import]
 
 def setup_otel(
     service_name: str,
-    otlp_endpoint: Optional[str] = None,
     also_export_to_tracegarden: bool = True,
     storage=None,
 ) -> TracerProvider:
@@ -31,9 +33,6 @@ def setup_otel(
     ----------
     service_name:
         The logical name of the service (e.g. ``"my-api"``).
-    otlp_endpoint:
-        gRPC OTLP endpoint (e.g. ``"http://localhost:4317"``).
-        If provided, a BatchSpanProcessor with an OTLP exporter is added.
     also_export_to_tracegarden:
         If True, also add a :class:`TraceGardenSpanExporter` so spans flow
         into the local TraceGarden UI.
@@ -48,19 +47,6 @@ def setup_otel(
     """
     resource = Resource.create({"service.name": service_name})
     provider = TracerProvider(resource=resource)
-
-    if otlp_endpoint:
-        try:
-            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (  # type: ignore[import]
-                OTLPSpanExporter,
-            )
-            otlp_exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
-            provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
-        except ImportError as exc:
-            raise ImportError(
-                "opentelemetry-exporter-otlp-proto-grpc is required for OTLP export. "
-                "Install it with: pip install opentelemetry-exporter-otlp-proto-grpc"
-            ) from exc
 
     if also_export_to_tracegarden:
         tg_exporter = TraceGardenSpanExporter(storage=storage)
@@ -101,7 +87,7 @@ class TraceGardenSpanExporter(SpanExporter):
                 storage.add_span_to_request(trace_id_hex, tg_span_dict)
             except Exception:
                 # Never let exporter errors bubble up and break the app
-                pass
+                logger.debug("Failed to export span to TraceGarden", exc_info=True)
         return SpanExportResult.SUCCESS
 
     def shutdown(self) -> None:
