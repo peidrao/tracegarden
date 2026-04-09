@@ -13,7 +13,6 @@ dependencies = [
     "jinja2>=3.1.0",
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
-    "requests>=2.31.0",
 ]
 
 [project.optional-dependencies]
@@ -21,7 +20,16 @@ django = ["django>=3.2"]
 flask = ["flask>=2.0"]
 fastapi = ["fastapi>=0.95.0", "starlette>=0.27.0"]
 celery = ["celery>=5.0", "redis>=5.0"]
-dev = ["pytest", "pytest-asyncio", "httpx"]
+http = ["requests>=2.31.0", "httpx>=0.24.0"]
+sqlalchemy = ["sqlalchemy>=1.4"]
+all = [
+    "celery>=5.0",
+    "redis>=5.0",
+    "requests>=2.31.0",
+    "httpx>=0.24.0",
+    "sqlalchemy>=1.4",
+]
+dev = ["pytest", "pytest-asyncio", "httpx", "requests"]
 
 [project.urls]
 Homepage = "https://github.com/tracegarden/tracegarden"
