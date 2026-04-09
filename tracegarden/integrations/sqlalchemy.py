@@ -21,9 +21,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from tracegarden.core.redaction import Redactor
+from tracegarden.core.runtime import get_runtime_redactor
+
 logger = logging.getLogger(__name__)
 
 _INSTRUMENTED_ENGINES: set = set()
+_FALLBACK_REDACTOR = Redactor()
 
 
 def install_sqlalchemy_instrumentation(engine: Any) -> None:
@@ -70,12 +74,11 @@ def install_sqlalchemy_instrumentation(engine: Any) -> None:
         try:
             from tracegarden.core.fingerprint import fingerprint_sql
             from tracegarden.core.models import DBQuery
-            from tracegarden.core.redaction import get_default_redactor
 
             # Resolve vendor from the dialect name (e.g. "postgresql", "mysql", "sqlite")
             db_vendor = getattr(engine.dialect, "name", "unknown")
 
-            redactor = get_default_redactor()
+            redactor = get_runtime_redactor() or _FALLBACK_REDACTOR
             q = DBQuery.create(
                 trace_id=ctx["trace_id"],
                 span_id=ctx.get("span_id", ""),

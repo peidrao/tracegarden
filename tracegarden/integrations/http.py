@@ -12,10 +12,12 @@ from typing import Any
 
 from tracegarden.core.context import add_http_call, get_current_trace_context
 from tracegarden.core.models import HTTPCall
-from tracegarden.core.redaction import get_default_redactor
+from tracegarden.core.redaction import Redactor
+from tracegarden.core.runtime import get_runtime_redactor
 
 _PATCHED = False
 logger = logging.getLogger(__name__)
+_FALLBACK_REDACTOR = Redactor()
 
 # References to the originals so we can restore them in uninstall.
 _original_requests_request = None
@@ -81,7 +83,7 @@ def _patch_requests() -> None:
         if not ctx.get("trace_id"):
             return original(self, method, url, **kwargs)
 
-        redactor = get_default_redactor()
+        redactor = get_runtime_redactor() or _FALLBACK_REDACTOR
         started = datetime.now(timezone.utc)
         t0 = time.perf_counter()
         status_code = 0
@@ -125,7 +127,7 @@ def _patch_httpx() -> None:
             if not ctx.get("trace_id"):
                 return original_sync(self, method, url, *args, **kwargs)
 
-            redactor = get_default_redactor()
+            redactor = get_runtime_redactor() or _FALLBACK_REDACTOR
             started = datetime.now(timezone.utc)
             t0 = time.perf_counter()
             status_code = 0
@@ -161,7 +163,7 @@ def _patch_httpx() -> None:
             if not ctx.get("trace_id"):
                 return await original_async(self, method, url, *args, **kwargs)
 
-            redactor = get_default_redactor()
+            redactor = get_runtime_redactor() or _FALLBACK_REDACTOR
             started = datetime.now(timezone.utc)
             t0 = time.perf_counter()
             status_code = 0
