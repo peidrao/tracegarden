@@ -53,11 +53,17 @@ def _try_install_sqlalchemy(app) -> None:
             return
 
         # Flask-SQLAlchemy 3.x: ext is the SQLAlchemy instance itself
+        # engine access requires an app context
         engine = None
-        if hasattr(ext, "engine"):
-            engine = ext.engine
-        elif hasattr(ext, "db") and hasattr(ext.db, "engine"):
-            engine = ext.db.engine
+        try:
+            with app.app_context():
+                if hasattr(ext, "engine"):
+                    engine = ext.engine
+                elif hasattr(ext, "db") and hasattr(ext.db, "engine"):
+                    engine = ext.db.engine
+        except Exception:
+            logger.debug("TraceGarden: could not resolve SQLAlchemy engine inside app context", exc_info=True)
+            return
 
         if engine is not None:
             install_sqlalchemy_instrumentation(engine)
