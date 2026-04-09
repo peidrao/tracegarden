@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/tracegarden.png" alt="TraceGarden" width="200"/>
+</p>
+
 # TraceGarden
 
 Developer-first visual backend devtools for Django, Flask, and FastAPI.
