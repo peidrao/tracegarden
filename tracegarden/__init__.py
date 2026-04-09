@@ -14,7 +14,11 @@ from typing import List, Optional
 from .core.storage import TraceStorage, get_default_storage, set_default_storage
 from .core.redaction import Redactor, configure_redactor
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import version as _meta_version
+    __version__ = _meta_version("tracegarden")
+except Exception:
+    __version__ = "0.0.0"
 logger = logging.getLogger(__name__)
 __all__ = [
     "TraceGardenConfig",

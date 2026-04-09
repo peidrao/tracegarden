@@ -161,7 +161,7 @@ def handle_export(
         return 404, "application/json", json.dumps({"error": "Not found"})
 
     export_data = {
-        "tracegarden_version": "0.1.0",
+        "tracegarden_version": __import__("tracegarden").__version__,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "metadata": {
             "ui_prefix": config.ui_prefix,
