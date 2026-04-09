@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}TraceGarden — Requests{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Requests <span class="count-badge">{{ total }}</span></h1>
+  <p class="page-subtitle">Recent HTTP requests captured by TraceGarden</p>
+</div>
+
+{% if not requests %}
+<div class="empty-state">
+  <div class="empty-icon">&#127807;</div>
+  <h2>No requests yet</h2>
+  <p>Make an HTTP request to your application and it will appear here.</p>
+</div>
+{% else %}
+<div class="requests-table-wrapper">
+  <table class="requests-table">
+    <thead>
+      <tr>
+        <th>Method</th>
+        <th>Path</th>
+        <th>Status</th>
+        <th class="align-right">Duration</th>
+        <th class="align-right">DB</th>
+        <th class="align-right">HTTP</th>
+        <th class="align-right">Tasks</th>
+        <th>Started</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for req in requests %}
+      <tr class="request-row {% if req.has_n_plus_one %}has-warning{% endif %}" onclick="location.href='{{ config.ui_prefix }}/request/{{ req.id }}/'">
+        <td>
+          <span class="method-badge method-{{ req.method | lower }}">{{ req.method }}</span>
+        </td>
+        <td class="path-cell">
+          <a href="{{ config.ui_prefix }}/request/{{ req.id }}/" class="path-link">{{ req.path }}</a>
+          {% if req.has_n_plus_one %}
+          <span class="warning-badge" title="N+1 queries detected">N+1</span>
+          {% endif %}
+        </td>
+        <td>
+          <span class="status-badge status-{{ (req.status_code // 100) }}xx">{{ req.status_code }}</span>
+        </td>
+        <td class="align-right mono">
+          <span class="{% if req.duration_ms > 1000 %}duration-slow{% elif req.duration_ms > 300 %}duration-medium{% else %}duration-fast{% endif %}">
+            {{ "%.1f" | format(req.duration_ms) }}ms
+          </span>
+        </td>
+        <td class="align-right">
+          {% if req.db_query_count > 0 %}
+          <span class="count-pill count-db">{{ req.db_query_count }}</span>
+          {% else %}
+          <span class="count-zero">—</span>
+          {% endif %}
+        </td>
+        <td class="align-right">
+          {% if req.http_call_count > 0 %}
+          <span class="count-pill count-http">{{ req.http_call_count }}</span>
+          {% else %}
+          <span class="count-zero">—</span>
+          {% endif %}
+        </td>
+        <td class="align-right">
+          {% if req.task_count > 0 %}
+          <span class="count-pill count-task">{{ req.task_count }}</span>
+          {% else %}
+          <span class="count-zero">—</span>
+          {% endif %}
+        </td>
+        <td class="mono text-muted time-cell">{{ req.started_at.strftime("%H:%M:%S") }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if total_pages > 1 %}
+<div class="pagination">
+  {% if page > 1 %}
+  <a href="?page={{ page - 1 }}" class="page-btn">&laquo; Prev</a>
+  {% endif %}
+  <span class="page-info">Page {{ page }} of {{ total_pages }}</span>
+  {% if page < total_pages %}
+  <a href="?page={{ page + 1 }}" class="page-btn">Next &raquo;</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}
