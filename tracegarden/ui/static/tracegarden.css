@@ -838,3 +838,34 @@ details > summary::-webkit-details-marker { display: none; }
 ::-webkit-scrollbar-track { background: var(--surface); }
 ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #5a5f80; }
+
+/* ---- Light mode (respects system preference) ---- */
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f6fa;
+    --surface: #ffffff;
+    --surface2: #eef0f6;
+    --surface3: #e3e6f0;
+    --border: #d0d4e8;
+    --border2: #b8bdd4;
+    --text: #1a1d2e;
+    --text-muted: #5c6080;
+    --accent: #3a5fe8;
+    --accent-hover: #2448cc;
+    --green: #2d8a52;
+    --yellow: #b58900;
+    --red: #c0392b;
+    --orange: #c0621a;
+    --purple: #7c4dc0;
+    --cyan: #1a9090;
+  }
+
+  .site-header { box-shadow: 0 1px 0 var(--border); }
+
+  .requests-table tbody tr:hover { background: var(--surface2); }
+
+  ::-webkit-scrollbar-track { background: var(--surface2); }
+  ::-webkit-scrollbar-thumb { background: var(--border2); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+}
