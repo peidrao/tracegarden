@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}TraceGarden{% endblock %}</title>
+  <link rel="stylesheet" href="{{ config.ui_prefix }}/static/tracegarden.css" />
+  <style>
+    /* Inline critical styles so the page renders even if static file fails */
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #222535;
+      --border: #2d3148;
+      --text: #e2e4f0;
+      --text-muted: #8b8fa8;
+      --accent: #6c8cff;
+      --accent-hover: #8ba3ff;
+      --green: #4caf76;
+      --yellow: #f0c040;
+      --red: #e05252;
+      --orange: #e0883a;
+      --purple: #a47fe0;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      --mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="{{ config.ui_prefix }}/" class="logo">
+        <span class="logo-icon">&#127807;</span>
+        <span class="logo-text">TraceGarden</span>
+      </a>
+      <nav class="header-nav">
+        <a href="{{ config.ui_prefix }}/" class="nav-link">Requests</a>
+        <span class="nav-badge">v0.1.0</span>
+      </nav>
+    </div>
+  </header>
+
+  <main class="main-content">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <span>TraceGarden &mdash; developer-first backend devtools</span>
+  </footer>
+</body>
+</html>
