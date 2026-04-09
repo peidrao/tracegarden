@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
     from tracegarden import TraceGardenConfig
     from tracegarden.core.redaction import Redactor
     from tracegarden.core.storage import TraceStorage
+
+logger = logging.getLogger(__name__)
 
 
 def init_tracegarden_flask(app, config, storage, redactor) -> None:
@@ -111,6 +114,7 @@ def _attach_hooks(app, config, storage, redactor) -> None:
                 "user_agent": request.user_agent.string if request.user_agent else "",
                 "remote_addr": request.remote_addr or "",
                 "traceparent": request.headers.get("traceparent", ""),
+                "n_plus_one_threshold": config.n_plus_one_threshold,
                 "query_string": redactor.redact_url_params(
                     "?" + (request.query_string.decode("utf-8", errors="replace") or "")
                 ).lstrip("?"),
@@ -137,6 +141,7 @@ def capture_flask_db_query(
         from flask import g, has_request_context  # type: ignore[import]
         from tracegarden.core.fingerprint import fingerprint_sql
         from tracegarden.core.models import DBQuery
+        from tracegarden.core.redaction import get_default_redactor
 
         if not has_request_context():
             return
@@ -146,6 +151,7 @@ def capture_flask_db_query(
         if not trace_id:
             return
 
+        redactor = get_default_redactor()
         fp = fingerprint_sql(sql)
         q = DBQuery.create(
             trace_id=trace_id,
@@ -153,7 +159,7 @@ def capture_flask_db_query(
             sql=sql,
             fingerprint=fp,
             duration_ms=duration_ms,
-            parameters=params,
+            parameters=redactor.redact_db_params(params),
             db_vendor=db_vendor,
             started_at=started_at or datetime.now(timezone.utc),
         )
@@ -162,7 +168,7 @@ def capture_flask_db_query(
         g._tg_db_queries.append(q)
         add_db_query(q)
     except Exception:
-        pass
+        logger.debug("Failed to capture Flask DB query", exc_info=True)
 
 
 def capture_flask_http_call(
@@ -201,4 +207,4 @@ def capture_flask_http_call(
         g._tg_http_calls.append(call)
         add_http_call(call)
     except Exception:
-        pass
+        logger.debug("Failed to capture Flask HTTP call", exc_info=True)
