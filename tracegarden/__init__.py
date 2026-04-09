@@ -5,8 +5,8 @@ Developer-first visual backend devtools for Django, Flask, and FastAPI.
 """
 from __future__ import annotations
 
-import os
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -19,7 +19,9 @@ try:
     __version__ = _meta_version("tracegarden")
 except Exception:
     __version__ = "0.0.0"
+
 logger = logging.getLogger(__name__)
+
 __all__ = [
     "TraceGardenConfig",
     "TraceGarden",
@@ -50,6 +52,8 @@ class TraceGardenConfig:
     ui_token:
         Token required to access ``/__tracegarden/`` UI. Set to ``None``
         to disable auth (not recommended in shared environments).
+    ui_token_header:
+        HTTP header name used to pass the UI token.
     db_path:
         Path to the SQLite database file.
     max_requests:
@@ -97,7 +101,12 @@ class TraceGarden:
         from tracegarden import TraceGarden
         tg = TraceGarden(app, ui_token="dev-secret")
 
-    Usage (standalone)::
+    Usage (FastAPI)::
+
+        from tracegarden import TraceGarden
+        tg = TraceGarden(app, ui_token="dev-secret")
+
+    Usage (standalone / Django via setup())::
 
         from tracegarden import TraceGarden
         tg = TraceGarden(config=TraceGardenConfig(db_path="/data/tg.db"))
@@ -116,28 +125,47 @@ class TraceGarden:
         if app is not None:
             self.init_app(app)
 
-    def init_app(self, app) -> None:
+    def _bootstrap(self) -> None:
+        """Initialize storage and redactor (framework-agnostic setup)."""
+        if self._storage is None:
+            self._storage = TraceStorage(
+                db_path=self.config.db_path,
+                max_requests=self.config.max_requests,
+            )
+            set_default_storage(self._storage)
+
+        if self._redactor is None:
+            self._redactor = configure_redactor(
+                header_denylist=set(self.config.redact_headers),
+                param_denylist=set(self.config.redact_params),
+                header_allowlist=set(self.config.header_allowlist),
+            )
+
+        from .integrations.http import install_http_instrumentation
+        install_http_instrumentation()
+
+        if self.config.ui_token is None:
+            logger.warning(
+                "TraceGarden: ui_token is not set — the UI at %s is accessible without "
+                "authentication. Set ui_token in TraceGardenConfig to restrict access.",
+                self.config.ui_prefix,
+            )
+
+    def init_app(self, app=None) -> None:
         """
         Initialise TraceGarden for a given application object.
 
         Detects the framework by duck-typing the app object.
+        Pass ``app=None`` to bootstrap storage and redactor without
+        registering any framework middleware (useful when called from ``setup()``).
         """
         if not self.config.enabled:
             return
 
-        self._storage = TraceStorage(
-            db_path=self.config.db_path,
-            max_requests=self.config.max_requests,
-        )
-        set_default_storage(self._storage)
+        self._bootstrap()
 
-        self._redactor = configure_redactor(
-            header_denylist=set(self.config.redact_headers),
-            param_denylist=set(self.config.redact_params),
-            header_allowlist=set(self.config.header_allowlist),
-        )
-        from .integrations.http import install_http_instrumentation
-        install_http_instrumentation()
+        if app is None:
+            return
 
         # Flask detection
         try:
@@ -185,6 +213,7 @@ class TraceGarden:
 
 
 def setup(
+    enabled: Optional[bool] = None,
     db_path: Optional[str] = None,
     ui_token: Optional[str] = None,
     ui_token_header: str = "X-TraceGarden-Token",
@@ -192,12 +221,19 @@ def setup(
     redact_params: Optional[List[str]] = None,
     header_allowlist: Optional[List[str]] = None,
     n_plus_one_threshold: int = 5,
+    max_requests: int = 5000,
+    capture_request_body: bool = False,
+    capture_response_body: bool = False,
+    ui_prefix: str = "/__tracegarden",
 ) -> TraceGarden:
     """
     Convenience function to create and configure a TraceGarden instance.
 
-    Returns the configured instance which can be used to call ``init_app``
-    later, or ignored if using Django (which is configured via settings).
+    Initializes storage and redactor immediately so the instance is ready
+    for use without calling ``init_app``. Use this for standalone setup or
+    when you want to manually pass storage/config to individual integrations.
+
+    Returns the configured :class:`TraceGarden` instance.
     """
     kwargs = {
         "ui_token": ui_token,
@@ -206,8 +242,17 @@ def setup(
         "redact_params": redact_params or [],
         "header_allowlist": header_allowlist or [],
         "n_plus_one_threshold": n_plus_one_threshold,
+        "max_requests": max_requests,
+        "capture_request_body": capture_request_body,
+        "capture_response_body": capture_response_body,
+        "ui_prefix": ui_prefix,
     }
+    if enabled is not None:
+        kwargs["enabled"] = enabled
     if db_path is not None:
         kwargs["db_path"] = db_path
     config = TraceGardenConfig(**kwargs)
-    return TraceGarden(config=config)
+    tg = TraceGarden(config=config)
+    # Bootstrap without a framework app — initializes storage, redactor, HTTP patching.
+    tg.init_app(app=None)
+    return tg
