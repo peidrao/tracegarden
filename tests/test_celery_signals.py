@@ -37,3 +37,24 @@ def test_before_publish_and_prerun_with_parent_trace(tmp_path, monkeypatch):
     updated = storage.get_task_by_celery_id("task-2")
     assert updated is not None
     assert updated.state == "STARTED"
+
+
+def test_celery_payload_is_redacted(tmp_path, monkeypatch):
+    storage = TraceStorage(db_path=str(tmp_path / "tg.db"))
+    monkeypatch.setattr(signals, "_get_storage", lambda: storage)
+
+    headers = {
+        "id": "task-3",
+        "task": "demo.task",
+        signals._TRACEGARDEN_PARENT_KEY: "b" * 32,
+    }
+    signals._on_before_task_publish(
+        headers=headers,
+        body=(["ok"], {"password": "123", "token": "abc"}),
+        routing_key="celery",
+    )
+
+    task = storage.get_task_by_celery_id("task-3")
+    assert task is not None
+    assert task.kwargs["password"] == "[REDACTED]"
+    assert task.kwargs["token"] == "[REDACTED]"

@@ -49,3 +49,10 @@ def test_redact_db_params_handles_dict_and_nested_values():
     assert out["password"] == "[REDACTED]"
     assert out["filters"][0]["token"] == "[REDACTED]"
     assert out["page"] == 1
+
+
+def test_non_json_body_is_fully_redacted():
+    redactor = Redactor()
+    body = "credit_card=4111111111111111"
+    out = redactor.redact_body(body, "text/plain")
+    assert out == "[BODY REDACTED]"

@@ -104,3 +104,92 @@ def test_fastapi_middleware_persists_500_and_captures_bodies(tmp_path):
     assert by_path["/boom"].status_code == 500
     assert "[REDACTED]" in by_path["/ok"].metadata.get("request_body", "")
     assert "[REDACTED]" in by_path["/ok"].metadata.get("response_body", "")
+
+
+def test_fastapi_middleware_creates_new_span_id_and_keeps_parent(tmp_path):
+    pytest.importorskip("starlette")
+
+    from tracegarden import TraceGardenConfig
+    from tracegarden.core.storage import TraceStorage
+    from tracegarden.integrations.fastapi.middleware import TraceGardenMiddleware
+
+    parent_span_id = "00f067aa0ba902b7"
+    traceparent = (
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-"
+        f"{parent_span_id}-01"
+    )
+
+    async def demo_app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok", "more_body": False})
+
+    storage = TraceStorage(db_path=str(tmp_path / "tg.db"))
+    cfg = TraceGardenConfig(ui_token="secret")
+    middleware = TraceGardenMiddleware(demo_app, config=cfg, storage=storage)
+
+    _, exc = _run(
+        _call_asgi(
+            middleware,
+            "/trace",
+            method="GET",
+            headers=[(b"traceparent", traceparent.encode("ascii"))],
+        )
+    )
+    assert exc is None
+
+    saved = storage.list_requests(limit=1)[0]
+    assert saved.trace_id == "4bf92f3577b34da6a3ce929d0e0e4736"
+    assert saved.span_id != parent_span_id
+    assert saved.metadata.get("parent_span_id") == parent_span_id
+
+
+def test_fastapi_middleware_marks_body_truncation(tmp_path):
+    pytest.importorskip("starlette")
+
+    from tracegarden import TraceGardenConfig
+    from tracegarden.core.storage import TraceStorage
+    from tracegarden.integrations.fastapi.middleware import TraceGardenMiddleware
+
+    async def demo_app(scope, receive, send):
+        while True:
+            msg = await receive()
+            if msg.get("type") == "http.request" and not msg.get("more_body", False):
+                break
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/plain")],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b"0123456789abcdefghij",
+                "more_body": False,
+            }
+        )
+
+    storage = TraceStorage(db_path=str(tmp_path / "tg.db"))
+    cfg = TraceGardenConfig(
+        ui_token="secret",
+        capture_request_body=True,
+        capture_response_body=True,
+        max_body_bytes=8,
+    )
+    middleware = TraceGardenMiddleware(demo_app, config=cfg, storage=storage)
+
+    _, exc = _run(
+        _call_asgi(
+            middleware,
+            "/truncate",
+            method="POST",
+            body=b'{"password":"123456789"}',
+            headers=[(b"content-type", b"application/json")],
+        )
+    )
+    assert exc is None
+
+    saved = storage.list_requests(limit=1)[0]
+    assert saved.metadata.get("request_body_truncated") is True
+    assert saved.metadata.get("response_body_truncated") is True

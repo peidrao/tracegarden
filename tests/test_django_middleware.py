@@ -28,16 +28,13 @@ def _setup_django():
 def test_django_middleware_persists_500_and_captures_request_body(tmp_path):
     _setup_django()
 
+    from django.conf import settings
     from django.http import HttpResponse
     from django.test import RequestFactory
 
-    from tracegarden.core.redaction import configure_redactor
-    from tracegarden.core.storage import TraceStorage, set_default_storage
     from tracegarden.integrations.django.middleware import TraceGardenMiddleware
 
-    storage = TraceStorage(db_path=str(tmp_path / "tg.db"))
-    set_default_storage(storage)
-    configure_redactor()
+    settings.TRACEGARDEN["db_path"] = str(tmp_path / "tg.db")
 
     rf = RequestFactory()
 
@@ -65,6 +62,7 @@ def test_django_middleware_persists_500_and_captures_request_body(tmp_path):
     with pytest.raises(RuntimeError):
         boom_middleware(boom_req)
 
+    storage = ok_middleware._storage
     records = storage.list_requests(limit=10)
     by_path = {r.path: r for r in records}
     assert "/ok" in by_path

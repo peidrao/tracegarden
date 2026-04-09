@@ -39,6 +39,31 @@ def test_span_is_appended_to_matching_trace(tmp_path):
     assert saved.spans[0].id == "c" * 16
 
 
+def test_span_is_buffered_when_request_not_persisted_yet(tmp_path):
+    storage = TraceStorage(db_path=str(tmp_path / "tg.db"))
+    trace_id = "f" * 32
+
+    span = Span.create(
+        trace_id=trace_id,
+        name="worker.step",
+        kind="INTERNAL",
+        span_id="1" * 16,
+        started_at=datetime.now(timezone.utc),
+        duration_ms=2.5,
+    )
+    storage.add_span_to_request(trace_id, span.to_dict())
+
+    req = TraceRequest.create(method="GET", path="/late", trace_id=trace_id, span_id="2" * 16)
+    req.status_code = 200
+    req.duration_ms = 5.0
+    storage.save_request(req)
+
+    saved = storage.get_request(req.id)
+    assert saved is not None
+    assert len(saved.spans) == 1
+    assert saved.spans[0].id == "1" * 16
+
+
 def test_celery_task_stitches_back_to_request(tmp_path):
     storage = TraceStorage(db_path=str(tmp_path / "tg.db"))
     req = TraceRequest.create(method="POST", path="/demo", trace_id="d" * 32, span_id="e" * 16)
