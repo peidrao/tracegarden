@@ -58,15 +58,7 @@ def _record_query(
     finally:
         duration_ms = (time.perf_counter() - t0) * 1000.0
         redactor = get_default_redactor()
-        safe_params = []
-        if params:
-            if isinstance(params, (list, tuple)):
-                safe_params = [
-                    redactor.redact_value if isinstance(p, str) and p else p
-                    for p in params
-                ]
-            elif isinstance(params, dict):
-                safe_params = list(redactor.redact_params(params).values())
+        safe_params = redactor.redact_db_params(params)
         q = DBQuery.create(
             trace_id=ctx.get("trace_id", ""),
             span_id=ctx.get("span_id", ""),

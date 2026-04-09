@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import time
 import uuid
+import logging
 from datetime import datetime, timezone
 from typing import Callable
 
 from django.conf import settings  # type: ignore[import]
 from django.http import HttpRequest, HttpResponse  # type: ignore[import]
+
+logger = logging.getLogger(__name__)
 
 
 def _get_tg_config():
@@ -32,7 +35,7 @@ def _get_db_vendor() -> str:
         if "sqlite" in engine:
             return "sqlite"
     except Exception:
-        pass
+        logger.debug("Failed to detect Django DB vendor from settings", exc_info=True)
     return "sqlite"
 
 
@@ -103,7 +106,7 @@ class TraceGardenMiddleware:
             from django.db import connection  # type: ignore[import]
             connection.execute_wrappers.append(_record_query)
         except Exception:
-            pass
+            logger.debug("Failed to install Django DB execute wrapper", exc_info=True)
 
         t0 = time.perf_counter()
         try:
@@ -118,7 +121,7 @@ class TraceGardenMiddleware:
                 if _record_query in connection.execute_wrappers:
                     connection.execute_wrappers.remove(_record_query)
             except Exception:
-                pass
+                logger.debug("Failed to remove Django DB execute wrapper", exc_info=True)
         duration_ms = (time.perf_counter() - t0) * 1000.0
 
         # Collect response headers
@@ -152,6 +155,7 @@ class TraceGardenMiddleware:
                 "user_agent": req_headers.get("user-agent", ""),
                 "remote_addr": request.META.get("REMOTE_ADDR", ""),
                 "traceparent": request.META.get("HTTP_TRACEPARENT", ""),
+                "n_plus_one_threshold": self._n_plus_one_threshold,
                 "query_string": redactor.redact_url_params(
                     "?" + request.META.get("QUERY_STRING", "")
                 ).lstrip("?"),
