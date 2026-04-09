@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Optional, Set
+import threading
+from typing import Any, Optional, Set, Union
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 SENSITIVE_HEADERS: Set[str] = {
@@ -147,7 +148,7 @@ class Redactor:
         redacted_obj = self._redact_dict_recursive(obj)
         return json.dumps(redacted_obj)
 
-    def _redact_dict_recursive(self, obj: object) -> object:
+    def _redact_dict_recursive(self, obj: object) -> Any:
         if isinstance(obj, dict):
             return {
                 k: (self.redact_value if self._is_param_sensitive(k) else self._redact_dict_recursive(v))
@@ -171,18 +172,19 @@ class Redactor:
                 redacted[key] = values
         return urlencode(redacted, doseq=True)
 
-    def redact_db_params(self, params: object) -> list:
+    def redact_db_params(self, params: object) -> Union[list, dict]:
         """
         Redact SQL bind parameters while preserving shape for storage.
 
-        - dict params are redacted by key and returned as values list.
-        - list/tuple params are recursively redacted item-by-item.
-        - scalar params are returned in a one-item list.
+        - dict params: redacted by key; key names are preserved for debuggability.
+        - list/tuple params: recursively redacted item-by-item.
+        - scalar params: returned in a one-item list.
         """
         if params is None:
             return []
         if isinstance(params, dict):
-            return list(self.redact_params(params).values())
+            # Preserve key names so the UI can show which parameter was redacted.
+            return self.redact_params(params)
         if isinstance(params, (list, tuple)):
             return [self._redact_value_recursive(item) for item in params]
         return [self._redact_value_recursive(params)]
@@ -197,12 +199,16 @@ class Redactor:
 
 # Module-level default redactor (no allowlists — strict mode).
 _default_redactor: Optional[Redactor] = None
+_redactor_lock = threading.Lock()
 
 
 def get_default_redactor() -> Redactor:
+    """Return (or lazily create) the process-wide default Redactor instance."""
     global _default_redactor
     if _default_redactor is None:
-        _default_redactor = Redactor()
+        with _redactor_lock:
+            if _default_redactor is None:
+                _default_redactor = Redactor()
     return _default_redactor
 
 
@@ -214,10 +220,12 @@ def configure_redactor(
 ) -> Redactor:
     """Create and install a new global redactor with the given settings."""
     global _default_redactor
-    _default_redactor = Redactor(
+    new_redactor = Redactor(
         header_denylist=header_denylist,
         param_denylist=param_denylist,
         header_allowlist=header_allowlist,
         redact_value=redact_value,
     )
-    return _default_redactor
+    with _redactor_lock:
+        _default_redactor = new_redactor
+    return new_redactor
