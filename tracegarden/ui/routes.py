@@ -114,6 +114,7 @@ def handle_index(
         total_pages=total_pages,
         total=total,
         config=config,
+        static_base=config.ui_prefix.rstrip("/"),
     )
     return 200, "text/html; charset=utf-8", body
 
@@ -143,6 +144,7 @@ def handle_detail(
         query_groups=_query_groups(req, config.n_plus_one_threshold),
         n_plus_one_warnings=n_plus_one_warnings,
         config=config,
+        static_base=config.ui_prefix.rstrip("/"),
     )
     return 200, "text/html; charset=utf-8", body
 
@@ -181,20 +183,31 @@ def handle_static(filename: str) -> tuple[int, str, bytes]:
     return 200, content_type, path.read_bytes()
 
 
-def mount_django_urls(config=None, storage=None):
+def mount_django_urls(config=None, storage=None, use_include: bool = False):
+    """
+    Return Django URL patterns for the TraceGarden UI.
+
+    When ``use_include=True`` the returned patterns have no prefix — the caller
+    is expected to mount them via ``path("<prefix>/", include(...))``.  The
+    ``config.ui_prefix`` value from Django settings is still used for asset
+    URLs inside templates.
+    """
     from django.http import HttpResponse  # type: ignore[import]
     from django.urls import path  # type: ignore[import]
 
     def _get_config():
-        if config is not None:
-            return config
+        # Always read from Django settings so templates get the real ui_prefix.
         from django.conf import settings  # type: ignore[import]
         from tracegarden import TraceGardenConfig
 
         tg = getattr(settings, "TRACEGARDEN", {})
-        return TraceGardenConfig(
+        cfg = TraceGardenConfig(
             **{k: v for k, v in tg.items() if k in TraceGardenConfig.__dataclass_fields__}
         )
+        if config is not None:
+            # Allow caller overrides except ui_prefix, which must stay real.
+            cfg.enabled = config.enabled
+        return cfg
 
     def _get_storage():
         if storage is not None:
@@ -242,6 +255,14 @@ def mount_django_urls(config=None, storage=None):
         return HttpResponse(body, content_type=ct, status=status)
 
     cfg = _get_config()
+    if use_include:
+        # Prefix is already handled by the path() in the project's urls.py.
+        return [
+            path("", view_index, name="tracegarden_index"),
+            path("request/<str:request_id>/", view_detail, name="tracegarden_detail"),
+            path("export/<str:request_id>/", view_export, name="tracegarden_export"),
+            path("static/<str:filename>", view_static, name="tracegarden_static"),
+        ]
     prefix = cfg.ui_prefix.strip("/")
     return [
         path(f"{prefix}/", view_index, name="tracegarden_index"),

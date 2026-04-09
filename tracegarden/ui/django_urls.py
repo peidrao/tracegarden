@@ -14,4 +14,6 @@ Usage in urls.py::
 """
 from tracegarden.ui.routes import mount_django_urls
 
-urlpatterns = mount_django_urls()
+# use_include=True: routes have no prefix (handled by path() in urls.py),
+# but ui_prefix from TRACEGARDEN settings is still used for asset URLs in templates.
+urlpatterns = mount_django_urls(use_include=True)
