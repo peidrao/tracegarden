@@ -46,5 +46,6 @@ def test_redact_db_params_handles_dict_and_nested_values():
     redactor = Redactor()
     params = {"password": "123", "filters": [{"token": "abc"}], "page": 1}
     out = redactor.redact_db_params(params)
-    assert "[REDACTED]" in out
-    assert 1 in out
+    assert out["password"] == "[REDACTED]"
+    assert out["filters"][0]["token"] == "[REDACTED]"
+    assert out["page"] == 1
