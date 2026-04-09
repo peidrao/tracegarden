@@ -9,7 +9,7 @@ import json
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Iterator, List, Optional
 
@@ -17,12 +17,10 @@ from .models import CeleryTask, TraceRequest
 
 
 def _default_db_path() -> str:
+    """Return the default SQLite path, creating the parent directory if needed."""
     p = Path.home() / ".tracegarden" / "tracegarden.db"
     p.parent.mkdir(parents=True, exist_ok=True)
     return str(p)
-
-
-_DEFAULT_DB_PATH = _default_db_path()
 
 
 class TraceStorage:
@@ -44,7 +42,9 @@ class TraceStorage:
     def _get_connection(self) -> sqlite3.Connection:
         """Return a per-thread SQLite connection (creates if absent)."""
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            # check_same_thread=True is the default and is correct here because
+            # each thread gets its own connection via threading.local.
+            conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
@@ -288,22 +288,28 @@ class TraceStorage:
         result: Optional[str] = None,
         exception: Optional[str] = None,
     ) -> None:
-        """Update the state fields of an existing CeleryTask."""
-        task = self.get_task_by_celery_id(task_id)
-        if task is None:
-            return
-        task.state = state
-        if started_at is not None:
-            task.started_at = started_at
-        if completed_at is not None:
-            task.completed_at = completed_at
-        if duration_ms is not None:
-            task.duration_ms = duration_ms
-        if result is not None:
-            task.result = result
-        if exception is not None:
-            task.exception = exception
+        """Update the state fields of an existing CeleryTask atomically."""
+        # Fetch, modify, and write within a single lock acquisition to avoid TOCTOU.
         with self._cursor() as cur:
+            cur.execute(
+                "SELECT data FROM celery_tasks WHERE task_id = ? LIMIT 1",
+                (task_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return
+            task = CeleryTask.from_dict(json.loads(row["data"]))
+            task.state = state
+            if started_at is not None:
+                task.started_at = started_at
+            if completed_at is not None:
+                task.completed_at = completed_at
+            if duration_ms is not None:
+                task.duration_ms = duration_ms
+            if result is not None:
+                task.result = result
+            if exception is not None:
+                task.exception = exception
             cur.execute("""
                 UPDATE celery_tasks
                 SET state = ?, data = ?
