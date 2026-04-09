@@ -6,6 +6,7 @@ Automatic outgoing HTTP capture for requests/httpx.
 from __future__ import annotations
 
 import time
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -14,6 +15,7 @@ from tracegarden.core.models import HTTPCall
 from tracegarden.core.redaction import get_default_redactor
 
 _PATCHED = False
+logger = logging.getLogger(__name__)
 
 
 def install_http_instrumentation() -> None:
@@ -46,21 +48,27 @@ def _patch_requests() -> None:
         redactor = get_default_redactor()
         started = datetime.now(timezone.utc)
         t0 = time.perf_counter()
-        response = original(self, method, url, **kwargs)
-        duration_ms = (time.perf_counter() - t0) * 1000.0
+        status_code = 0
+        response_headers = {}
+        try:
+            response = original(self, method, url, **kwargs)
+            status_code = int(getattr(response, "status_code", 0) or 0)
+            response_headers = dict(getattr(response, "headers", {}) or {})
+            return response
+        finally:
+            duration_ms = (time.perf_counter() - t0) * 1000.0
 
-        call = HTTPCall.create(
-            trace_id=ctx["trace_id"],
-            method=method.upper(),
-            url=redactor.redact_url_params(url),
-            status_code=int(getattr(response, "status_code", 0) or 0),
-            duration_ms=duration_ms,
-            request_headers=redactor.redact_headers(dict(kwargs.get("headers") or {})),
-            response_headers=redactor.redact_headers(dict(getattr(response, "headers", {}) or {})),
-            started_at=started,
-        )
-        add_http_call(call)
-        return response
+            call = HTTPCall.create(
+                trace_id=ctx["trace_id"],
+                method=method.upper(),
+                url=redactor.redact_url_params(url),
+                status_code=status_code,
+                duration_ms=duration_ms,
+                request_headers=redactor.redact_headers(dict(kwargs.get("headers") or {})),
+                response_headers=redactor.redact_headers(response_headers),
+                started_at=started,
+            )
+            add_http_call(call)
 
     wrapped._tracegarden_patched = True  # type: ignore[attr-defined]
     requests.Session.request = wrapped
@@ -83,21 +91,26 @@ def _patch_httpx() -> None:
             redactor = get_default_redactor()
             started = datetime.now(timezone.utc)
             t0 = time.perf_counter()
-            response = original_sync(self, method, url, *args, **kwargs)
-            duration_ms = (time.perf_counter() - t0) * 1000.0
-
-            call = HTTPCall.create(
-                trace_id=ctx["trace_id"],
-                method=str(method).upper(),
-                url=redactor.redact_url_params(str(url)),
-                status_code=int(getattr(response, "status_code", 0) or 0),
-                duration_ms=duration_ms,
-                request_headers=redactor.redact_headers(_headers_to_dict(kwargs.get("headers"))),
-                response_headers=redactor.redact_headers(_headers_to_dict(getattr(response, "headers", None))),
-                started_at=started,
-            )
-            add_http_call(call)
-            return response
+            status_code = 0
+            response_headers = {}
+            try:
+                response = original_sync(self, method, url, *args, **kwargs)
+                status_code = int(getattr(response, "status_code", 0) or 0)
+                response_headers = _headers_to_dict(getattr(response, "headers", None))
+                return response
+            finally:
+                duration_ms = (time.perf_counter() - t0) * 1000.0
+                call = HTTPCall.create(
+                    trace_id=ctx["trace_id"],
+                    method=str(method).upper(),
+                    url=redactor.redact_url_params(str(url)),
+                    status_code=status_code,
+                    duration_ms=duration_ms,
+                    request_headers=redactor.redact_headers(_headers_to_dict(kwargs.get("headers"))),
+                    response_headers=redactor.redact_headers(response_headers),
+                    started_at=started,
+                )
+                add_http_call(call)
 
         wrapped_sync._tracegarden_patched = True  # type: ignore[attr-defined]
         httpx.Client.request = wrapped_sync
@@ -113,21 +126,26 @@ def _patch_httpx() -> None:
             redactor = get_default_redactor()
             started = datetime.now(timezone.utc)
             t0 = time.perf_counter()
-            response = await original_async(self, method, url, *args, **kwargs)
-            duration_ms = (time.perf_counter() - t0) * 1000.0
-
-            call = HTTPCall.create(
-                trace_id=ctx["trace_id"],
-                method=str(method).upper(),
-                url=redactor.redact_url_params(str(url)),
-                status_code=int(getattr(response, "status_code", 0) or 0),
-                duration_ms=duration_ms,
-                request_headers=redactor.redact_headers(_headers_to_dict(kwargs.get("headers"))),
-                response_headers=redactor.redact_headers(_headers_to_dict(getattr(response, "headers", None))),
-                started_at=started,
-            )
-            add_http_call(call)
-            return response
+            status_code = 0
+            response_headers = {}
+            try:
+                response = await original_async(self, method, url, *args, **kwargs)
+                status_code = int(getattr(response, "status_code", 0) or 0)
+                response_headers = _headers_to_dict(getattr(response, "headers", None))
+                return response
+            finally:
+                duration_ms = (time.perf_counter() - t0) * 1000.0
+                call = HTTPCall.create(
+                    trace_id=ctx["trace_id"],
+                    method=str(method).upper(),
+                    url=redactor.redact_url_params(str(url)),
+                    status_code=status_code,
+                    duration_ms=duration_ms,
+                    request_headers=redactor.redact_headers(_headers_to_dict(kwargs.get("headers"))),
+                    response_headers=redactor.redact_headers(response_headers),
+                    started_at=started,
+                )
+                add_http_call(call)
 
         wrapped_async._tracegarden_patched = True  # type: ignore[attr-defined]
         httpx.AsyncClient.request = wrapped_async
@@ -141,4 +159,5 @@ def _headers_to_dict(value: Any) -> dict:
     try:
         return dict(value)
     except Exception:
+        logger.debug("Unable to convert headers to dict", exc_info=True)
         return {}
