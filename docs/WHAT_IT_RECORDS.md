@@ -7,6 +7,7 @@ TraceGarden stores request-scoped debugging data in local SQLite.
 - request + response headers (redacted)
 - query string (redacted)
 - source metadata (`user_agent`, remote address)
+- optional request/response body capture with `max_body_bytes` truncation flags
 
 ## Database events
 - each SQL statement + normalized fingerprint
