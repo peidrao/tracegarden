@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700">
+  <rect width="1200" height="700" fill="#0f1117"/>
+  <rect x="0" y="0" width="1200" height="56" fill="#1a1d27"/>
+  <text x="24" y="36" fill="#e2e4f0" font-family="monospace" font-size="24">TraceGarden Detail /demo</text>
+  <rect x="24" y="96" width="1152" height="80" rx="8" fill="#1a1d27" stroke="#2d3148"/>
+  <text x="44" y="128" fill="#e2e4f0" font-family="monospace" font-size="14">Trace ID: 4bf92f3577b34da6a3ce929d0e0e4736</text>
+  <text x="44" y="152" fill="#8b8fa8" font-family="monospace" font-size="14">DB: 4  HTTP: 1  TASKS: 1</text>
+  <rect x="24" y="200" width="1152" height="460" rx="8" fill="#1a1d27" stroke="#2d3148"/>
+  <text x="44" y="230" fill="#8b8fa8" font-family="monospace" font-size="14">Timeline</text>
+  <rect x="280" y="248" width="860" height="24" fill="#6c8cff"/>
+  <text x="44" y="266" fill="#e2e4f0" font-family="monospace" font-size="13">SERVER GET /demo</text>
+  <rect x="420" y="292" width="220" height="20" fill="#4caf76"/>
+  <text x="44" y="307" fill="#e2e4f0" font-family="monospace" font-size="13">DB SELECT users WHERE id = ? (x4)</text>
+  <rect x="700" y="332" width="260" height="20" fill="#4cc9c9"/>
+  <text x="44" y="347" fill="#e2e4f0" font-family="monospace" font-size="13">HTTP GET https://httpbin.org/get</text>
+  <rect x="640" y="372" width="300" height="20" fill="#a47fe0"/>
+  <text x="44" y="387" fill="#e2e4f0" font-family="monospace" font-size="13">TASK demo_task PENDING -&gt; SUCCESS</text>
+</svg>

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700">
+  <rect width="1200" height="700" fill="#0f1117"/>
+  <rect x="0" y="0" width="1200" height="56" fill="#1a1d27"/>
+  <text x="24" y="36" fill="#e2e4f0" font-family="monospace" font-size="24">TraceGarden Requests</text>
+  <rect x="24" y="96" width="1152" height="560" rx="8" fill="#1a1d27" stroke="#2d3148"/>
+  <rect x="24" y="96" width="1152" height="44" fill="#222535"/>
+  <text x="44" y="124" fill="#8b8fa8" font-family="monospace" font-size="14">METHOD PATH STATUS DURATION DB HTTP TASKS STARTED</text>
+  <rect x="36" y="152" width="1128" height="40" fill="#1a1d27"/>
+  <text x="44" y="178" fill="#e2e4f0" font-family="monospace" font-size="14">GET /demo 200 48.1ms 4 1 1 12:10:03</text>
+  <rect x="36" y="196" width="1128" height="40" fill="#1a1d27"/>
+  <text x="44" y="222" fill="#e2e4f0" font-family="monospace" font-size="14">GET /users 200 12.3ms 1 0 0 12:10:05</text>
+</svg>
