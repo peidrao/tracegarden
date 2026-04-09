@@ -16,6 +16,7 @@ from tracegarden.core.context import (
     clear_request_context,
     get_db_queries,
 )
+from tracegarden.core.runtime import get_runtime_redactor
 
 
 def get_pending_queries() -> list:
@@ -41,7 +42,6 @@ def _record_query(execute, sql: str, params, many: bool, context):
     """
     from tracegarden.core.fingerprint import fingerprint_sql
     from tracegarden.core.models import DBQuery
-    from tracegarden.core.redaction import get_default_redactor
 
     ctx = get_current_trace_context()
     if not ctx.get("trace_id"):
@@ -60,7 +60,9 @@ def _record_query(execute, sql: str, params, many: bool, context):
         return execute(sql, params, many, context)
     finally:
         duration_ms = (time.perf_counter() - t0) * 1000.0
-        redactor = get_default_redactor()
+        redactor = get_runtime_redactor()
+        if redactor is None:
+            return
         safe_params = redactor.redact_db_params(params)
         q = DBQuery.create(
             trace_id=ctx.get("trace_id", ""),

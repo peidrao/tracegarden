@@ -13,6 +13,10 @@ from typing import Callable
 from django.conf import settings  # type: ignore[import]
 from django.http import HttpRequest, HttpResponse  # type: ignore[import]
 
+from tracegarden import TraceGardenConfig
+from tracegarden.core.redaction import Redactor
+from tracegarden.core.runtime import bind_runtime, reset_runtime
+from tracegarden.core.storage import TraceStorage
 from tracegarden.core.tracecontext import new_span_id, new_trace_id, parse_traceparent
 
 logger = logging.getLogger(__name__)
@@ -59,6 +63,22 @@ class TraceGardenMiddleware:
         self._enabled = self._tg_settings.get("enabled", True)
         self._db_vendor = _get_db_vendor()
         self._n_plus_one_threshold = self._tg_settings.get("n_plus_one_threshold", 5)
+        self._config = TraceGardenConfig(
+            **{
+                k: v
+                for k, v in self._tg_settings.items()
+                if k in TraceGardenConfig.__dataclass_fields__
+            }
+        )
+        self._storage = TraceStorage(
+            db_path=self._config.db_path,
+            max_requests=self._config.max_requests,
+        )
+        self._redactor = Redactor(
+            header_denylist=set(self._config.redact_headers),
+            param_denylist=set(self._config.redact_params),
+            header_allowlist=set(self._config.header_allowlist),
+        )
 
     def __call__(self, request: HttpRequest) -> HttpResponse:
         ui_prefix = self._tg_settings.get("ui_prefix", "/__tracegarden")
@@ -74,20 +94,20 @@ class TraceGardenMiddleware:
         )
         from tracegarden.core.fingerprint import annotate_duplicates
         from tracegarden.core.models import TraceRequest
-        from tracegarden.core.redaction import get_default_redactor
-        from tracegarden.core.storage import get_default_storage
         from .signals import _record_query
 
-        redactor = get_default_redactor()
-        storage = get_default_storage()
+        redactor = self._redactor
+        storage = self._storage
 
         # Build trace context
         incoming = parse_traceparent(request.META.get("HTTP_TRACEPARENT"))
         trace_id = incoming[0] if incoming else new_trace_id()
-        span_id = incoming[1] if incoming else new_span_id()
+        parent_span_id = incoming[1] if incoming else ""
+        span_id = new_span_id()
         started_at = datetime.now(timezone.utc)
         set_request_context(trace_id=trace_id, span_id=span_id, db_vendor=self._db_vendor)
         reset_events()
+        runtime_tokens = bind_runtime(storage, redactor)
 
         # Collect request headers
         req_headers: dict = {}
@@ -143,6 +163,7 @@ class TraceGardenMiddleware:
                 "user_agent": req_headers.get("user-agent", ""),
                 "remote_addr": request.META.get("REMOTE_ADDR", ""),
                 "traceparent": request.META.get("HTTP_TRACEPARENT", ""),
+                "parent_span_id": parent_span_id,
                 "n_plus_one_threshold": self._n_plus_one_threshold,
                 "query_string": redactor.redact_url_params(
                     "?" + request.META.get("QUERY_STRING", "")
@@ -151,20 +172,33 @@ class TraceGardenMiddleware:
 
             capture_req_body = self._tg_settings.get("capture_request_body", False)
             capture_resp_body = self._tg_settings.get("capture_response_body", False)
+            max_body_bytes = int(self._tg_settings.get("max_body_bytes", 64 * 1024) or 0)
 
             if capture_req_body and request.method in ("POST", "PUT", "PATCH"):
                 try:
-                    raw = request.body.decode("utf-8", errors="replace")
+                    raw_body = request.body or b""
+                    truncated = max_body_bytes > 0 and len(raw_body) > max_body_bytes
+                    if max_body_bytes > 0:
+                        raw_body = raw_body[:max_body_bytes]
+                    raw = raw_body.decode("utf-8", errors="replace")
                     ct = request.META.get("CONTENT_TYPE", "")
                     metadata["request_body"] = redactor.redact_body(raw, ct)
+                    if truncated:
+                        metadata["request_body_truncated"] = True
                 except Exception:
                     logger.debug("Failed to capture request body", exc_info=True)
 
             if capture_resp_body and response is not None and hasattr(response, "content"):
                 try:
-                    raw = response.content.decode("utf-8", errors="replace")
+                    raw_body = response.content or b""
+                    truncated = max_body_bytes > 0 and len(raw_body) > max_body_bytes
+                    if max_body_bytes > 0:
+                        raw_body = raw_body[:max_body_bytes]
+                    raw = raw_body.decode("utf-8", errors="replace")
                     ct = response.get("content-type", "")
                     metadata["response_body"] = redactor.redact_body(raw, ct)
+                    if truncated:
+                        metadata["response_body_truncated"] = True
                 except Exception:
                     logger.debug("Failed to capture response body", exc_info=True)
 
@@ -192,6 +226,7 @@ class TraceGardenMiddleware:
                 logger.debug("Failed to save TraceRequest", exc_info=True)
 
             clear_request_context()
+            reset_runtime(runtime_tokens)
 
         if exc is not None:
             raise exc

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
-from .core.storage import TraceStorage, get_default_storage, set_default_storage
+from .core.storage import TraceStorage
 from .core.redaction import Redactor, configure_redactor
 
 try:
@@ -70,6 +70,8 @@ class TraceGardenConfig:
         Whether to capture and store request bodies (after redaction).
     capture_response_body:
         Whether to capture and store response bodies (after redaction).
+    max_body_bytes:
+        Maximum request/response body size to capture before truncation.
     ui_prefix:
         URL prefix for the TraceGarden UI (default ``/__tracegarden``).
     """
@@ -89,7 +91,12 @@ class TraceGardenConfig:
     n_plus_one_threshold: int = 5
     capture_request_body: bool = False
     capture_response_body: bool = False
+    max_body_bytes: int = 64 * 1024
     ui_prefix: str = "/__tracegarden"
+
+    def __post_init__(self) -> None:
+        if self.max_body_bytes < 0:
+            self.max_body_bytes = 0
 
 
 class TraceGarden:
@@ -132,7 +139,6 @@ class TraceGarden:
                 db_path=self.config.db_path,
                 max_requests=self.config.max_requests,
             )
-            set_default_storage(self._storage)
 
         if self._redactor is None:
             self._redactor = configure_redactor(
@@ -208,7 +214,10 @@ class TraceGarden:
     @property
     def storage(self) -> TraceStorage:
         if self._storage is None:
-            self._storage = get_default_storage(self.config.db_path)
+            self._storage = TraceStorage(
+                db_path=self.config.db_path,
+                max_requests=self.config.max_requests,
+            )
         return self._storage
 
 
@@ -224,6 +233,7 @@ def setup(
     max_requests: int = 5000,
     capture_request_body: bool = False,
     capture_response_body: bool = False,
+    max_body_bytes: int = 64 * 1024,
     ui_prefix: str = "/__tracegarden",
 ) -> TraceGarden:
     """
@@ -245,6 +255,7 @@ def setup(
         "max_requests": max_requests,
         "capture_request_body": capture_request_body,
         "capture_response_body": capture_response_body,
+        "max_body_bytes": max_body_bytes,
         "ui_prefix": ui_prefix,
     }
     if enabled is not None:

@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from typing import Any, Optional, Tuple
 
 from tracegarden.core.context import get_current_trace_id
+from tracegarden.core.redaction import Redactor
+from tracegarden.core.storage import TraceStorage
 from tracegarden.core.tracecontext import new_trace_id
 
 try:
@@ -28,31 +30,65 @@ except ImportError:
 
 _TRACEGARDEN_PARENT_KEY = "tracegarden_parent_trace_id"
 _TRACEGARDEN_TRACE_KEY = "tracegarden_trace_id"
+_SIGNALS_CONNECTED = False
+_STORAGE: Optional[TraceStorage] = None
+_REDACTOR: Optional[Redactor] = None
 
 
 def _get_storage():
-    from tracegarden.core.storage import get_default_storage
+    global _STORAGE
+    if _STORAGE is None:
+        _STORAGE = TraceStorage()
+    return _STORAGE
 
-    return get_default_storage()
+
+def _get_redactor() -> Redactor:
+    global _REDACTOR
+    if _REDACTOR is None:
+        _REDACTOR = Redactor()
+    return _REDACTOR
 
 
-def connect_signals() -> None:
+def configure_runtime(
+    storage: Optional[TraceStorage] = None,
+    redactor: Optional[Redactor] = None,
+) -> None:
+    """Set explicit runtime dependencies used by Celery signal handlers."""
+    global _STORAGE, _REDACTOR
+    if storage is not None:
+        _STORAGE = storage
+    if redactor is not None:
+        _REDACTOR = redactor
+
+
+def connect_signals(
+    storage: Optional[TraceStorage] = None,
+    redactor: Optional[Redactor] = None,
+) -> None:
     """Connect all TraceGarden Celery signal handlers."""
+    global _SIGNALS_CONNECTED
     if not _CELERY_AVAILABLE:
         raise RuntimeError(
             "Celery is not installed. Install it with: pip install tracegarden[celery]"
         )
+    configure_runtime(storage=storage, redactor=redactor)
+    if _SIGNALS_CONNECTED:
+        return
     before_task_publish.connect(_on_before_task_publish, weak=False)
     task_prerun.connect(_on_task_prerun, weak=False)
     task_postrun.connect(_on_task_postrun, weak=False)
     task_failure.connect(_on_task_failure, weak=False)
     task_retry.connect(_on_task_retry, weak=False)
     task_unknown.connect(_on_task_unknown, weak=False)
+    _SIGNALS_CONNECTED = True
 
 
 def disconnect_signals() -> None:
     """Disconnect all TraceGarden Celery signal handlers."""
+    global _SIGNALS_CONNECTED
     if not _CELERY_AVAILABLE:
+        return
+    if not _SIGNALS_CONNECTED:
         return
     before_task_publish.disconnect(_on_before_task_publish)
     task_prerun.disconnect(_on_task_prerun)
@@ -60,6 +96,7 @@ def disconnect_signals() -> None:
     task_failure.disconnect(_on_task_failure)
     task_retry.disconnect(_on_task_retry)
     task_unknown.disconnect(_on_task_unknown)
+    _SIGNALS_CONNECTED = False
 
 
 def _on_before_task_publish(
@@ -91,6 +128,7 @@ def _on_before_task_publish(
     from tracegarden.core.models import CeleryTask
 
     args, kwargs_payload = _extract_args_kwargs(body)
+    args, kwargs_payload = _redact_task_payload(args, kwargs_payload)
     task_name = headers.get("task") or sender or "unknown"
     queue_name = routing_key or "default"
 
@@ -100,8 +138,8 @@ def _on_before_task_publish(
         parent_trace_id=parent_trace_id,
         task_name=str(task_name),
         queue=queue_name,
-        args=list(args),
-        kwargs=dict(kwargs_payload),
+        args=args,
+        kwargs=kwargs_payload,
     )
     celery_task.state = "PENDING"
     _get_storage().save_celery_task(celery_task)
@@ -140,14 +178,16 @@ def _on_task_prerun(
     queue_info = getattr(getattr(task, "request", None), "delivery_info", {})
     queue_name = queue_info.get("routing_key", "default") if isinstance(queue_info, dict) else "default"
 
+    redacted_args, redacted_kwargs = _redact_task_payload(list(args or []), dict(kwargs or {}))
+
     celery_task = CeleryTask.create(
         task_id=task_id,
         trace_id=trace_id,
         parent_trace_id=parent_trace_id,
         task_name=task.name if task else "unknown",
         queue=queue_name,
-        args=list(args or []),
-        kwargs=dict(kwargs or {}),
+        args=redacted_args,
+        kwargs=redacted_kwargs,
     )
     celery_task.state = "STARTED"
     celery_task.started_at = datetime.now(timezone.utc)
@@ -295,3 +335,14 @@ def _extract_args_kwargs(body: Any) -> Tuple[list, dict]:
         return list(args) if isinstance(args, (list, tuple)) else [], dict(kw) if isinstance(kw, dict) else {}
 
     return [], {}
+
+
+def _redact_task_payload(args: list, kwargs_payload: dict) -> Tuple[list, dict]:
+    redactor = _get_redactor()
+    safe_args = redactor.redact_db_params(args)
+    safe_kwargs = redactor.redact_db_params(kwargs_payload)
+    if not isinstance(safe_args, list):
+        safe_args = list(args)
+    if not isinstance(safe_kwargs, dict):
+        safe_kwargs = dict(kwargs_payload)
+    return safe_args, safe_kwargs

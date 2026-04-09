@@ -19,6 +19,7 @@ from tracegarden.core.context import (
     reset_events,
     set_request_context,
 )
+from tracegarden.core.runtime import bind_runtime, get_runtime_redactor, reset_runtime
 from tracegarden.core.tracecontext import new_span_id, new_trace_id, parse_traceparent
 
 if TYPE_CHECKING:
@@ -108,10 +109,12 @@ def _attach_hooks(app, config: "TraceGardenConfig", storage: "TraceStorage", red
         g._tg_skip = False
         incoming = parse_traceparent(request.headers.get("traceparent"))
         trace_id = incoming[0] if incoming else new_trace_id()
-        span_id = incoming[1] if incoming else new_span_id()
+        parent_span_id = incoming[1] if incoming else ""
+        span_id = new_span_id()
         started_at = datetime.now(timezone.utc)
         set_request_context(trace_id=trace_id, span_id=span_id, db_vendor=db_vendor)
         reset_events()
+        g._tg_runtime_tokens = bind_runtime(storage, redactor)
 
         req_headers = {}
         for k, v in request.headers:
@@ -120,6 +123,7 @@ def _attach_hooks(app, config: "TraceGardenConfig", storage: "TraceStorage", red
 
         g._tg_trace_id = trace_id
         g._tg_span_id = span_id
+        g._tg_parent_span_id = parent_span_id
         g._tg_started_at = started_at
         g._tg_safe_req_headers = safe_req_headers
         g._tg_t0 = time.perf_counter()
@@ -153,6 +157,7 @@ def _attach_hooks(app, config: "TraceGardenConfig", storage: "TraceStorage", red
             "user_agent": request.user_agent.string if request.user_agent else "",
             "remote_addr": request.remote_addr or "",
             "traceparent": request.headers.get("traceparent", ""),
+            "parent_span_id": getattr(g, "_tg_parent_span_id", ""),
             "n_plus_one_threshold": config.n_plus_one_threshold,
             "query_string": redactor.redact_url_params(
                 "?" + (request.query_string.decode("utf-8", errors="replace") or "")
@@ -161,17 +166,29 @@ def _attach_hooks(app, config: "TraceGardenConfig", storage: "TraceStorage", red
 
         if config.capture_request_body and request.method in ("POST", "PUT", "PATCH"):
             try:
-                raw = request.get_data(as_text=True)
+                raw_body = request.get_data(cache=True, as_text=False) or b""
+                truncated = config.max_body_bytes > 0 and len(raw_body) > config.max_body_bytes
+                if config.max_body_bytes > 0:
+                    raw_body = raw_body[: config.max_body_bytes]
+                raw = raw_body.decode("utf-8", errors="replace")
                 ct = request.content_type or ""
                 metadata["request_body"] = redactor.redact_body(raw, ct)
+                if truncated:
+                    metadata["request_body_truncated"] = True
             except Exception:
                 logger.debug("Failed to capture request body", exc_info=True)
 
         if config.capture_response_body:
             try:
-                raw = response.get_data(as_text=True)
+                raw_body = response.get_data(as_text=False) or b""
+                truncated = config.max_body_bytes > 0 and len(raw_body) > config.max_body_bytes
+                if config.max_body_bytes > 0:
+                    raw_body = raw_body[: config.max_body_bytes]
+                raw = raw_body.decode("utf-8", errors="replace")
                 ct = response.content_type or ""
                 metadata["response_body"] = redactor.redact_body(raw, ct)
+                if truncated:
+                    metadata["response_body_truncated"] = True
             except Exception:
                 logger.debug("Failed to capture response body", exc_info=True)
 
@@ -199,7 +216,21 @@ def _attach_hooks(app, config: "TraceGardenConfig", storage: "TraceStorage", red
             logger.debug("Failed to save TraceRequest", exc_info=True)
 
         clear_request_context()
+        tokens = getattr(g, "_tg_runtime_tokens", None)
+        if tokens is not None:
+            reset_runtime(tokens)
+            g._tg_runtime_tokens = None
         return response
+
+    @app.teardown_request
+    def _tracegarden_teardown(_exc):
+        from flask import g  # type: ignore[import]
+
+        clear_request_context()
+        tokens = getattr(g, "_tg_runtime_tokens", None)
+        if tokens is not None:
+            reset_runtime(tokens)
+            g._tg_runtime_tokens = None
 
 
 def capture_flask_db_query(
@@ -217,7 +248,6 @@ def capture_flask_db_query(
         from tracegarden.core.context import get_current_trace_context
         from tracegarden.core.fingerprint import fingerprint_sql
         from tracegarden.core.models import DBQuery
-        from tracegarden.core.redaction import get_default_redactor
 
         ctx = get_current_trace_context()
         trace_id = ctx.get("trace_id", "")
@@ -225,7 +255,9 @@ def capture_flask_db_query(
         if not trace_id:
             return
 
-        redactor = get_default_redactor()
+        redactor = get_runtime_redactor()
+        if redactor is None:
+            return
         fp = fingerprint_sql(sql)
         q = DBQuery.create(
             trace_id=trace_id,
@@ -254,13 +286,14 @@ def capture_flask_http_call(
     try:
         from tracegarden.core.context import get_current_trace_context
         from tracegarden.core.models import HTTPCall
-        from tracegarden.core.redaction import get_default_redactor
 
         trace_id = get_current_trace_context().get("trace_id", "")
         if not trace_id:
             return
 
-        redactor = get_default_redactor()
+        redactor = get_runtime_redactor()
+        if redactor is None:
+            return
         call = HTTPCall.create(
             trace_id=trace_id,
             method=method,
