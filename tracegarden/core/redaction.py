@@ -38,6 +38,7 @@ SENSITIVE_PARAMS: Set[str] = {
 }
 
 _DEFAULT_REDACTED = "[REDACTED]"
+_BODY_REDACTED = "[BODY REDACTED]"
 logger = logging.getLogger(__name__)
 
 
@@ -119,7 +120,7 @@ class Redactor:
             return self._redact_json_body(body)
         if ct == "application/x-www-form-urlencoded":
             return self._redact_form_body(body)
-        return body
+        return _BODY_REDACTED
 
     def redact_url_params(self, url: str) -> str:
         """Redact sensitive query parameters in a URL string."""
@@ -144,7 +145,7 @@ class Redactor:
         try:
             obj = json.loads(body)
         except (json.JSONDecodeError, ValueError):
-            return body
+            return _BODY_REDACTED
         redacted_obj = self._redact_dict_recursive(obj)
         return json.dumps(redacted_obj)
 
