@@ -33,6 +33,10 @@ if TYPE_CHECKING:
     from tracegarden.core.storage import TraceStorage
 
 
+import logging
+logger = logging.getLogger(__name__)
+
+
 class TraceGardenMiddleware(BaseHTTPMiddleware):
     """ASGI middleware that captures request/response data for TraceGarden."""
 
@@ -42,11 +46,18 @@ class TraceGardenMiddleware(BaseHTTPMiddleware):
         config: Optional["TraceGardenConfig"] = None,
         storage: Optional["TraceStorage"] = None,
         redactor: Optional["Redactor"] = None,
+        sqlalchemy_engine: Optional[object] = None,
     ):
         super().__init__(app)
         self._config = config
         self._storage = storage
         self._redactor = redactor
+        if sqlalchemy_engine is not None:
+            try:
+                from tracegarden.integrations.sqlalchemy import install_sqlalchemy_instrumentation
+                install_sqlalchemy_instrumentation(sqlalchemy_engine)
+            except Exception:
+                logger.debug("TraceGarden: SQLAlchemy auto-instrumentation failed", exc_info=True)
 
     def _get_config(self):
         if self._config is not None:
