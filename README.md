@@ -7,7 +7,7 @@ TraceGarden captures request timelines (DB + HTTP + spans + Celery) into local S
 ## Features
 
 - WSGI + ASGI support (`Django`, `Flask`, `FastAPI`)
-- OTel-native span ingestion + OTLP export compatibility
+- OTel-native span ingestion into local TraceGarden UI
 - DB query fingerprinting, grouping, duplicate and N+1 detection
 - Outgoing HTTP inspector (`requests` / `httpx`)
 - Celery stitching (`web request -> queued task -> worker state`)
@@ -100,7 +100,6 @@ from tracegarden.otel.setup import setup_otel
 
 setup_otel(
     service_name="my-api",
-    otlp_endpoint="http://localhost:4317",
     also_export_to_tracegarden=True,
 )
 ```
