@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
+import warnings
 from typing import Any, Optional, Set, Union
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -198,35 +198,30 @@ class Redactor:
         return value
 
 
-# Module-level default redactor (no allowlists — strict mode).
-_default_redactor: Optional[Redactor] = None
-_redactor_lock = threading.Lock()
-
-
-def get_default_redactor() -> Redactor:
-    """Return (or lazily create) the process-wide default Redactor instance."""
-    global _default_redactor
-    if _default_redactor is None:
-        with _redactor_lock:
-            if _default_redactor is None:
-                _default_redactor = Redactor()
-    return _default_redactor
-
-
 def configure_redactor(
     header_denylist: Optional[set] = None,
     param_denylist: Optional[set] = None,
     header_allowlist: Optional[set] = None,
     redact_value: str = _DEFAULT_REDACTED,
 ) -> Redactor:
-    """Create and install a new global redactor with the given settings."""
-    global _default_redactor
-    new_redactor = Redactor(
+    """Create a Redactor with the given settings."""
+    return Redactor(
         header_denylist=header_denylist,
         param_denylist=param_denylist,
         header_allowlist=header_allowlist,
         redact_value=redact_value,
     )
-    with _redactor_lock:
-        _default_redactor = new_redactor
-    return new_redactor
+
+
+def get_default_redactor() -> Redactor:
+    """
+    Backward-compatible helper.
+
+    Prefer passing an explicit redactor or using runtime context binding.
+    """
+    warnings.warn(
+        "get_default_redactor() is deprecated; pass a Redactor explicitly.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return Redactor()
