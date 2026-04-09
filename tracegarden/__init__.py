@@ -6,6 +6,7 @@ Developer-first visual backend devtools for Django, Flask, and FastAPI.
 from __future__ import annotations
 
 import os
+import logging
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -13,6 +14,7 @@ from .core.storage import TraceStorage, get_default_storage, set_default_storage
 from .core.redaction import Redactor, configure_redactor
 
 __version__ = "0.1.0"
+logger = logging.getLogger(__name__)
 __all__ = [
     "TraceGardenConfig",
     "TraceGarden",
@@ -135,7 +137,7 @@ class TraceGarden:
                 self._init_flask(app)
                 return
         except ImportError:
-            pass
+            logger.debug("Flask is not installed; skipping Flask integration detection")
 
         # FastAPI detection
         try:
@@ -144,7 +146,12 @@ class TraceGarden:
                 self._init_fastapi(app)
                 return
         except ImportError:
-            pass
+            logger.debug("FastAPI is not installed; skipping FastAPI integration detection")
+
+        raise TypeError(
+            "Unsupported app instance. TraceGarden currently supports Flask and FastAPI via "
+            "`TraceGarden(app, ...)`; Django uses settings + middleware integration."
+        )
 
     def _init_flask(self, app) -> None:
         from .integrations.flask.extension import init_tracegarden_flask
