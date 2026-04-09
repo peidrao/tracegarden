@@ -5,7 +5,12 @@ Django AppConfig for TraceGarden.
 """
 from __future__ import annotations
 
+import logging
+import os
+
 from django.apps import AppConfig  # type: ignore[import]
+
+logger = logging.getLogger(__name__)
 
 
 class TraceGardenConfig(AppConfig):
@@ -22,22 +27,17 @@ class TraceGardenConfig(AppConfig):
             return
 
         # Import here to avoid premature Django setup during import
-        from tracegarden.core.storage import TraceStorage, set_default_storage
-        from tracegarden.core.redaction import configure_redactor
         from tracegarden import TraceGardenConfig as TGConfig
+        from tracegarden.core.redaction import configure_redactor
+        from tracegarden.core.storage import TraceStorage, set_default_storage
 
-        config = TGConfig(
-            enabled=tg_settings.get("enabled", True),
-            ui_token=tg_settings.get("ui_token"),
-            ui_token_header=tg_settings.get("ui_token_header", "X-TraceGarden-Token"),
-            db_path=tg_settings.get("db_path", "/tmp/tracegarden.db"),
-            max_requests=tg_settings.get("max_requests", 5000),
-            redact_headers=tg_settings.get("redact_headers", []),
-            redact_params=tg_settings.get("redact_params", []),
-            header_allowlist=tg_settings.get("header_allowlist", []),
-            n_plus_one_threshold=tg_settings.get("n_plus_one_threshold", 5),
-            ui_prefix=tg_settings.get("ui_prefix", "/__tracegarden"),
-        )
+        # Build config from settings, using TraceGardenConfig defaults for
+        # any key not present — avoids hardcoding defaults in two places.
+        valid_fields = TGConfig.__dataclass_fields__
+        config_values = {k: v for k, v in tg_settings.items() if k in valid_fields}
+        if "db_path" not in config_values:
+            config_values["db_path"] = os.path.join("/tmp", "tracegarden.db")
+        config = TGConfig(**config_values)
 
         storage = TraceStorage(db_path=config.db_path, max_requests=config.max_requests)
         set_default_storage(storage)
@@ -47,8 +47,16 @@ class TraceGardenConfig(AppConfig):
             param_denylist=set(config.redact_params),
             header_allowlist=set(config.header_allowlist),
         )
+
         from tracegarden.integrations.http import install_http_instrumentation
         install_http_instrumentation()
 
-        # Connect DB query capture signals
-        from . import signals as _signals  # noqa: F401 — side-effect import
+        if config.ui_token is None:
+            logger.warning(
+                "TraceGarden: ui_token is not set — the UI at %s is accessible without "
+                "authentication. Set TRACEGARDEN['ui_token'] to restrict access.",
+                config.ui_prefix,
+            )
+
+        # Connect DB query capture signals (side-effect import)
+        from . import signals as _signals  # noqa: F401

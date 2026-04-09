@@ -5,14 +5,15 @@ Django WSGI middleware for TraceGarden request capture.
 """
 from __future__ import annotations
 
-import time
-import uuid
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Callable
 
 from django.conf import settings  # type: ignore[import]
 from django.http import HttpRequest, HttpResponse  # type: ignore[import]
+
+from tracegarden.core.tracecontext import new_span_id, new_trace_id, parse_traceparent
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ def _get_db_vendor() -> str:
             return "sqlite"
     except Exception:
         logger.debug("Failed to detect Django DB vendor from settings", exc_info=True)
-    return "sqlite"
+    return "unknown"
 
 
 class TraceGardenMiddleware:
@@ -64,18 +65,17 @@ class TraceGardenMiddleware:
         if not self._enabled or request.path.startswith(ui_prefix):
             return self.get_response(request)
 
-        from tracegarden.core.models import TraceRequest
-        from tracegarden.core.redaction import get_default_redactor
-        from tracegarden.core.fingerprint import annotate_duplicates
-        from tracegarden.core.storage import get_default_storage
-        from tracegarden.core.tracecontext import parse_traceparent
         from tracegarden.core.context import (
-            set_request_context,
             clear_request_context,
-            reset_events,
             get_db_queries,
             get_http_calls,
+            reset_events,
+            set_request_context,
         )
+        from tracegarden.core.fingerprint import annotate_duplicates
+        from tracegarden.core.models import TraceRequest
+        from tracegarden.core.redaction import get_default_redactor
+        from tracegarden.core.storage import get_default_storage
         from .signals import _record_query
 
         redactor = get_default_redactor()
@@ -83,14 +83,14 @@ class TraceGardenMiddleware:
 
         # Build trace context
         incoming = parse_traceparent(request.META.get("HTTP_TRACEPARENT"))
-        trace_id = incoming[0] if incoming else str(uuid.uuid4()).replace("-", "")
-        span_id = str(uuid.uuid4()).replace("-", "")[:16]
+        trace_id = incoming[0] if incoming else new_trace_id()
+        span_id = incoming[1] if incoming else new_span_id()
         started_at = datetime.now(timezone.utc)
         set_request_context(trace_id=trace_id, span_id=span_id, db_vendor=self._db_vendor)
         reset_events()
 
         # Collect request headers
-        req_headers = {}
+        req_headers: dict = {}
         for key, value in request.META.items():
             if key.startswith("HTTP_"):
                 header_name = key[5:].replace("_", "-").lower()
@@ -108,50 +108,38 @@ class TraceGardenMiddleware:
         except Exception:
             logger.debug("Failed to install Django DB execute wrapper", exc_info=True)
 
+        response: HttpResponse | None = None
+        exc: BaseException | None = None
         t0 = time.perf_counter()
         try:
-            response: HttpResponse = self.get_response(request)
-        except Exception:
-            clear_request_context()
-            raise
+            response = self.get_response(request)
+        except Exception as e:
+            exc = e
         finally:
-            # Remove DB execute wrapper even when app raises.
+            # Always remove DB execute wrapper.
             try:
                 from django.db import connection  # type: ignore[import]
                 if _record_query in connection.execute_wrappers:
                     connection.execute_wrappers.remove(_record_query)
             except Exception:
                 logger.debug("Failed to remove Django DB execute wrapper", exc_info=True)
-        duration_ms = (time.perf_counter() - t0) * 1000.0
 
-        # Collect response headers
-        resp_headers = {}
-        for key, value in response.items():
-            resp_headers[key.lower()] = value
-        safe_resp_headers = redactor.redact_headers(resp_headers)
+            duration_ms = (time.perf_counter() - t0) * 1000.0
 
-        # Gather queries and annotate duplicates
-        queries = get_db_queries()
-        annotate_duplicates(queries)
-        http_calls = get_http_calls()
+            # Collect response headers (only if we got a response)
+            resp_headers: dict = {}
+            if response is not None:
+                for key, value in response.items():
+                    resp_headers[key.lower()] = value
+            safe_resp_headers = redactor.redact_headers(resp_headers)
 
-        # Build TraceRequest
-        trace_req = TraceRequest(
-            id=str(uuid.uuid4()),
-            trace_id=trace_id,
-            span_id=span_id,
-            method=request.method,
-            path=request.path,
-            status_code=response.status_code,
-            duration_ms=duration_ms,
-            started_at=started_at,
-            request_headers=safe_req_headers,
-            response_headers=safe_resp_headers,
-            db_queries=queries,
-            http_calls=http_calls,
-            spans=[],
-            celery_tasks=[],
-            metadata={
+            queries = get_db_queries()
+            annotate_duplicates(queries)
+            http_calls = get_http_calls()
+
+            status_code = response.status_code if response is not None else 500
+
+            metadata: dict = {
                 "user_agent": req_headers.get("user-agent", ""),
                 "remote_addr": request.META.get("REMOTE_ADDR", ""),
                 "traceparent": request.META.get("HTTP_TRACEPARENT", ""),
@@ -159,10 +147,53 @@ class TraceGardenMiddleware:
                 "query_string": redactor.redact_url_params(
                     "?" + request.META.get("QUERY_STRING", "")
                 ).lstrip("?"),
-            },
-        )
+            }
 
-        storage.save_request(trace_req)
-        clear_request_context()
+            capture_req_body = self._tg_settings.get("capture_request_body", False)
+            capture_resp_body = self._tg_settings.get("capture_response_body", False)
 
-        return response
+            if capture_req_body and request.method in ("POST", "PUT", "PATCH"):
+                try:
+                    raw = request.body.decode("utf-8", errors="replace")
+                    ct = request.META.get("CONTENT_TYPE", "")
+                    metadata["request_body"] = redactor.redact_body(raw, ct)
+                except Exception:
+                    logger.debug("Failed to capture request body", exc_info=True)
+
+            if capture_resp_body and response is not None and hasattr(response, "content"):
+                try:
+                    raw = response.content.decode("utf-8", errors="replace")
+                    ct = response.get("content-type", "")
+                    metadata["response_body"] = redactor.redact_body(raw, ct)
+                except Exception:
+                    logger.debug("Failed to capture response body", exc_info=True)
+
+            trace_req = TraceRequest(
+                id=new_trace_id(),
+                trace_id=trace_id,
+                span_id=span_id,
+                method=request.method,
+                path=request.path,
+                status_code=status_code,
+                duration_ms=duration_ms,
+                started_at=started_at,
+                request_headers=safe_req_headers,
+                response_headers=safe_resp_headers,
+                db_queries=queries,
+                http_calls=http_calls,
+                spans=[],
+                celery_tasks=[],
+                metadata=metadata,
+            )
+
+            try:
+                storage.save_request(trace_req)
+            except Exception:
+                logger.debug("Failed to save TraceRequest", exc_info=True)
+
+            clear_request_context()
+
+        if exc is not None:
+            raise exc
+
+        return response  # type: ignore[return-value]
