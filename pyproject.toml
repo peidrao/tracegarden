@@ -36,10 +36,10 @@ all = [
 dev = ["pytest", "pytest-asyncio", "httpx", "requests", "mypy", "ruff"]
 
 [project.urls]
-Homepage = "https://github.com/tracegarden/tracegarden"
-Documentation = "https://github.com/tracegarden/tracegarden#readme"
-Repository = "https://github.com/tracegarden/tracegarden"
-Issues = "https://github.com/tracegarden/tracegarden/issues"
+Homepage = "https://github.com/peidrao/tracegarden"
+Documentation = "https://github.com/peidrao/tracegarden#readme"
+Repository = "https://github.com/peidrao/tracegarden"
+Issues = "https://github.com/peidrao/tracegarden/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tracegarden"]
