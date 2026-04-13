@@ -10,7 +10,7 @@ import sqlite3
 import threading
 import warnings
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, List, Optional
 
@@ -71,7 +71,7 @@ class TraceStorage:
     # ------------------------------------------------------------------
 
     def init_db(self) -> None:
-        """Create tables if they do not already exist."""
+        """Create tables if they do not already exist, then prune stale pending spans."""
         with self._cursor() as cur:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS trace_requests (
@@ -125,6 +125,7 @@ class TraceStorage:
                 CREATE INDEX IF NOT EXISTS idx_pending_spans_trace_id
                 ON pending_spans(trace_id)
             """)
+        self.prune_pending_spans()
 
     # ------------------------------------------------------------------
     # TraceRequest CRUD
@@ -236,6 +237,23 @@ class TraceStorage:
                     (row["trace_id"],),
                 )
             cur.execute("DELETE FROM trace_requests WHERE id = ?", (request_id,))
+
+    def prune_pending_spans(self, older_than_hours: int = 1) -> int:
+        """Delete pending spans older than *older_than_hours* and return the count removed.
+
+        Pending spans accumulate when OTel spans arrive before their parent
+        request is saved (e.g. the request was never completed or was routed
+        to a different process).  Without pruning they grow without bound.
+        Called automatically on :meth:`init_db`.
+        """
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+        ).isoformat()
+        with self._cursor() as cur:
+            cur.execute(
+                "DELETE FROM pending_spans WHERE started_at < ?", (cutoff,)
+            )
+            return cur.rowcount
 
     def clear_all(self) -> None:
         """Delete all stored data."""
