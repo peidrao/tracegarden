@@ -6,6 +6,7 @@ Celery signal handlers for task lifecycle events and request-task stitching.
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timezone
 from typing import Any, Optional, Tuple
 
@@ -31,22 +32,59 @@ except ImportError:
 _TRACEGARDEN_PARENT_KEY = "tracegarden_parent_trace_id"
 _TRACEGARDEN_TRACE_KEY = "tracegarden_trace_id"
 _SIGNALS_CONNECTED = False
-_STORAGE: Optional[TraceStorage] = None
-_REDACTOR: Optional[Redactor] = None
 
 
-def _get_storage():
-    global _STORAGE
-    if _STORAGE is None:
-        _STORAGE = TraceStorage()
-    return _STORAGE
+class _CeleryRuntime:
+    """Thread-safe container for Celery signal handler dependencies.
+
+    Replaces bare module-level globals to prevent race conditions when
+    ``configure_runtime`` is called from multiple threads or test cases.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._storage: Optional[TraceStorage] = None
+        self._redactor: Optional[Redactor] = None
+
+    def configure(
+        self,
+        storage: Optional[TraceStorage] = None,
+        redactor: Optional[Redactor] = None,
+    ) -> None:
+        with self._lock:
+            if storage is not None:
+                self._storage = storage
+            if redactor is not None:
+                self._redactor = redactor
+
+    def reset(self) -> None:
+        """Clear stored dependencies (useful for test isolation)."""
+        with self._lock:
+            self._storage = None
+            self._redactor = None
+
+    def get_storage(self) -> TraceStorage:
+        with self._lock:
+            if self._storage is None:
+                self._storage = TraceStorage()
+            return self._storage
+
+    def get_redactor(self) -> Redactor:
+        with self._lock:
+            if self._redactor is None:
+                self._redactor = Redactor()
+            return self._redactor
+
+
+_runtime = _CeleryRuntime()
+
+
+def _get_storage() -> TraceStorage:
+    return _runtime.get_storage()
 
 
 def _get_redactor() -> Redactor:
-    global _REDACTOR
-    if _REDACTOR is None:
-        _REDACTOR = Redactor()
-    return _REDACTOR
+    return _runtime.get_redactor()
 
 
 def configure_runtime(
@@ -54,11 +92,7 @@ def configure_runtime(
     redactor: Optional[Redactor] = None,
 ) -> None:
     """Set explicit runtime dependencies used by Celery signal handlers."""
-    global _STORAGE, _REDACTOR
-    if storage is not None:
-        _STORAGE = storage
-    if redactor is not None:
-        _REDACTOR = redactor
+    _runtime.configure(storage=storage, redactor=redactor)
 
 
 def connect_signals(

@@ -5,6 +5,7 @@ ASGI middleware for FastAPI / Starlette.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
@@ -246,7 +247,8 @@ class TraceGardenMiddleware:
             )
 
             try:
-                storage.save_request(trace_req)
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, storage.save_request, trace_req)
             except Exception:
                 logger.debug("Failed to save TraceRequest", exc_info=True)
 
