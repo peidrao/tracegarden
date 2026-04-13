@@ -6,17 +6,34 @@
 
 Developer-first visual backend devtools for Django, Flask, and FastAPI.
 
-TraceGarden captures request timelines (DB + HTTP + spans + Celery) into local SQLite and serves a built-in UI at `/__tracegarden`.
+TraceGarden captures the full request lifecycle — DB queries, outgoing HTTP, OpenTelemetry spans, and **Celery tasks stitched back to the web request that triggered them** — into local SQLite and serves a built-in UI at `/__tracegarden`.
+
+## Why TraceGarden?
+
+**Django Debug Toolbar is great for SQL.** TraceGarden goes further:
+
+| Capability | Django Debug Toolbar | TraceGarden |
+|---|---|---|
+| SQL queries + N+1 detection | ✅ | ✅ |
+| Outgoing HTTP calls inspector | ❌ | ✅ |
+| Celery task timeline | ❌ | ✅ |
+| **Celery task ↔ parent request stitching** | ❌ | ✅ |
+| OpenTelemetry span ingestion | ❌ | ✅ |
+| Flask / FastAPI support | ❌ | ✅ |
+| Trace bundle export (JSON) | ❌ | ✅ |
+
+The key feature is **Celery stitching**: when a web request enqueues a background task, TraceGarden links the task's full lifecycle (PENDING → STARTED → SUCCESS/FAILURE, with duration and result) back to the originating request in the UI. No external infrastructure required.
 
 ## Features
 
 - WSGI + ASGI support (`Django`, `Flask`, `FastAPI`)
-- OTel-native span ingestion into local TraceGarden UI
 - DB query fingerprinting, grouping, duplicate and N+1 detection
 - Outgoing HTTP inspector (`requests` / `httpx`)
-- Celery stitching (`web request -> queued task -> worker state`)
+- Celery stitching (`web request → queued task → worker state`)
+- OTel-native span ingestion into local TraceGarden UI
 - Trace bundle export (single JSON artifact)
-- Development guardrails: redaction by default + UI token protection
+- Redaction by default: auth tokens, passwords, cookies never reach SQLite
+- UI token protection
 
 ## Installation
 
@@ -31,7 +48,27 @@ pip install tracegarden[celery]
 
 ## Quick Start
 
-### Django (one app + one middleware)
+### Flask (two lines)
+
+```python
+from flask import Flask
+from tracegarden import TraceGarden
+
+app = Flask(__name__)
+TraceGarden(app, ui_token="dev-secret")
+```
+
+### FastAPI (two lines)
+
+```python
+from fastapi import FastAPI
+from tracegarden import TraceGarden
+
+app = FastAPI()
+TraceGarden(app, ui_token="dev-secret")
+```
+
+### Django
 
 ```python
 # settings.py
@@ -48,9 +85,6 @@ MIDDLEWARE = [
 TRACEGARDEN = {
     "enabled": True,
     "ui_token": "dev-secret",
-    "ui_token_header": "X-TraceGarden-Token",
-    "ui_prefix": "/__tracegarden",
-    "max_body_bytes": 65536,
 }
 
 # urls.py
@@ -58,27 +92,22 @@ from tracegarden.ui.routes import mount_django_urls
 urlpatterns = mount_django_urls() + urlpatterns
 ```
 
-### Flask (init extension)
+### Celery stitching
+
+Add one call after your Celery app is created:
 
 ```python
-from flask import Flask
-from tracegarden import TraceGarden
+# celery.py
+from celery import Celery
+from tracegarden.integrations.celery.signals import connect_signals
+from tracegarden.core.storage import TraceStorage
 
-app = Flask(__name__)
-TraceGarden(app, ui_token="dev-secret")
+app = Celery("myproject")
+storage = TraceStorage()
+connect_signals(storage=storage)
 ```
 
-When body capture is enabled, payload capture is truncated at `max_body_bytes` to prevent unbounded memory/storage growth.
-
-### FastAPI (one middleware)
-
-```python
-from fastapi import FastAPI
-from tracegarden import TraceGarden
-
-app = FastAPI()
-TraceGarden(app, ui_token="dev-secret")
-```
+TraceGarden will automatically propagate trace IDs through task headers and correlate each task back to the web request that dispatched it — including task duration, result, and failure details.
 
 ## UI Access
 
@@ -104,6 +133,16 @@ setup_otel(
     also_export_to_tracegarden=True,
 )
 ```
+
+## Body capture
+
+Request and response bodies are **not captured by default**. Enable with:
+
+```python
+TraceGarden(app, ui_token="dev-secret", capture_request_body=True, capture_response_body=True)
+```
+
+Bodies are truncated at `max_body_bytes` (default 64 KB) and redacted before storage.
 
 ## What gets recorded
 
